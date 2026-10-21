@@ -2,7 +2,8 @@
 //   J6 (PMOD DVI): HDMI out, waveform monitor and per-pin IQ activity bars
 //   J4: the 8 IQ inputs from the XIAO ESP32-C5 (see top.cst)
 //   Debugger UART (COM4, 1 Mbaud): 'C' dumps raw 675 MS/s samples,
-//   'S' the resampled ~80 MS/s symbols, 'B' symbols with the FM output
+//   'S' the resampled ~80 MS/s symbols, 'B' symbols with the FM output,
+//   'P' picture display, 'W' waveform monitor display
 module top (
     input  wire       clk,          // 50 MHz
     output wire       led,
@@ -84,12 +85,42 @@ module top (
         .busy(la_busy), .activity(activity)
     );
 
+    // ---- NTSC sync separation and line sampling (IQ domain) ----
+    wire        lb_we;
+    wire [14:0] lb_waddr;
+    wire [7:0]  lb_wdata;
+    wire        field_tg, field_parity;
+    wire [15:0] real_lines, field_lines;
+    video_in u_vin (
+        .clk(clk_iq), .rst(rst_iq), .in_valid(fm_valid), .vid(fm_vid),
+        .we(lb_we), .waddr(lb_waddr), .wdata(lb_wdata),
+        .field_tg(field_tg), .parity(field_parity),
+        .real_lines(real_lines), .field_lines(field_lines)
+    );
+
+    // Display mode from the UART: 'P' picture (default), 'W' waveform.
+    reg pic_mode_iq = 1'b1;
+    always @(posedge clk_iq) if (rx_valid) begin
+        if (rx_data == "P") pic_mode_iq <= 1'b1;
+        if (rx_data == "W") pic_mode_iq <= 1'b0;
+    end
+
+    // To the pixel domain: field start (edge of the toggle), parity, mode.
+    reg [2:0] field_s;
+    reg [1:0] parity_s, mode_s;
+    always @(posedge clk_pixel) begin
+        field_s  <= {field_s[1:0], field_tg};
+        parity_s <= {parity_s[0], field_parity};
+        mode_s   <= {mode_s[0], pic_mode_iq};
+    end
+    wire field_go = field_s[2] ^ field_s[1];
+
     // ---- Video ----
     wire [10:0] x;
     wire [9:0]  y;
     wire de, hsync, vsync, frame_start, line_start;
     video_timing u_timing (
-        .clk(clk_pixel), .rst(rst), .x(x), .y(y), .de(de),
+        .clk(clk_pixel), .rst(rst), .go(field_go), .x(x), .y(y), .de(de),
         .hsync(hsync), .vsync(vsync), .frame_start(frame_start), .line_start(line_start)
     );
 
@@ -101,12 +132,20 @@ module top (
         .triggered(sc_trig)
     );
 
+    wire [14:0] pic_addr;
+    wire [7:0]  pic;
+    line_buffer u_lbuf (
+        .wclk(clk_iq), .we(lb_we), .waddr(lb_waddr), .wdata(lb_wdata),
+        .rclk(clk_pixel), .raddr(pic_addr), .rdata(pic)
+    );
+
     wire [23:0] rgb;
     wire        de_d, hsync_d, vsync_d;
     display u_display (
         .clk(clk_pixel), .x(x), .y(y), .de(de), .hsync(hsync), .vsync(vsync),
         .line_start(line_start), .activity(activity), .early_cnt(early_cnt),
         .late_cnt(late_cnt), .sc_rd(sc_rd), .sc_trig(sc_trig),
+        .pic_mode(mode_s[1]), .parity(parity_s[1]), .pic_addr(pic_addr), .pic(pic),
         .rgb(rgb), .de_o(de_d), .hsync_o(hsync_d), .vsync_o(vsync_d)
     );
     wire [7:0] r = rgb[23:16], g = rgb[15:8], b = rgb[7:0];

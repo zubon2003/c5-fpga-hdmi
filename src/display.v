@@ -7,6 +7,10 @@
 //               rows 8, 9 resampler early / late votes per 0.78 ms / 64
 // The scope RAM is read with address x at stage 0, its data arrives with
 // stage 1. Counts come from the IQ domain and are only displayed.
+//
+// Picture mode (pic_mode = 1) shows the demodulated luma instead: output
+// line y shows field line y / 3 (one more output line for the second field,
+// half an input line lower), read from the line buffer at {line [3:0], x}.
 module display (
     input  wire               clk,
     input  wire [10:0]        x,
@@ -20,6 +24,10 @@ module display (
     input  wire [15:0]        late_cnt,
     input  wire signed [13:0] sc_rd,
     input  wire               sc_trig,
+    input  wire               pic_mode,
+    input  wire               parity,
+    output reg  [14:0]        pic_addr,
+    input  wire [7:0]         pic,
     output reg  [23:0]        rgb,
     output reg                de_o,
     output reg                hsync_o,
@@ -55,6 +63,18 @@ module display (
         if (x == 2) len <= (cnt > 13'd1260) ? 11'd1260 : cnt[10:0];
     end
 
+    // ---- picture: field line for this output line ----
+    reg [7:0] src;
+    reg [1:0] c3;
+    always @(posedge clk) begin
+        if (line_start) begin
+            if (y == 0)       begin src <= 0;          c3 <= parity ? 2'd3 : 2'd0; end
+            else if (c3 == 2) begin src <= src + 8'd1; c3 <= 2'd0;                 end
+            else                     c3 <= c3 + 2'd1;
+        end
+    end
+    always @(*) pic_addr = {src[3:0], x};
+
     // ---- stage 1 ----
     reg [9:0]  y1;
     reg        de1, hs1, vs1, sc1, grid1, led1, bar1, mark1;
@@ -80,7 +100,11 @@ module display (
     reg  [9:0] y2;
     reg        de2, hs2, vs2, sc2, grid2, led2, bar2, mark2;
     reg  [3:0] r2;
+    reg  [7:0] pic2;
+    reg        pm2;
     always @(posedge clk) begin
+        pic2  <= pic;
+        pm2   <= pic_mode;
         ty2   <= (t_s < 0) ? 10'd0 : (t_s > 16'sd479) ? 10'd479 : t_s[9:0];
         typ   <= ty2;
         y2    <= y1;
@@ -104,6 +128,7 @@ module display (
         hsync_o <= hs2;
         vsync_o <= vs2;
         if (led2)                 rgb <= sc_trig ? 24'h20d040 : 24'hd03020;
+        else if (pm2)             rgb <= {pic2, pic2, pic2};
         else if (sc2 && trace)    rgb <= 24'hf0f070;
         else if (sc2 && grid2)    rgb <= 24'h303840;
         else if (sc2)             rgb <= 24'h0c1014;

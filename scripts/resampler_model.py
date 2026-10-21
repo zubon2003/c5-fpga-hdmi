@@ -14,32 +14,42 @@ import demod
 
 
 def resampler(words):
-    """words: (N, 8) uint8. Returns symbols and early/late vote counts."""
-    pos, acc, prev_sym, pending = 0, 0, 0, 0
+    """words: (N, 8) uint8. Returns symbols and early/late vote counts.
+    Clock-by-clock like the RTL: the detector sees the symbol emitted the
+    clock before, and its step lands at the next emit after that."""
+    pos, acc, prev_sym = 0, 0, 0
+    up = dn = 0
+    h1, s1, e1 = False, 0, 0
     prv = np.zeros(8, np.uint8)
     out, early_n, late_n = [], 0, 0
     for w in words:
         buf = np.concatenate([prv, w])
-        if pos < 512:
-            s = int(buf[8 + (pos >> 6)])
-            e = int(buf[(pos + 242) >> 6])
-            moved = s != prev_sym
-            early = moved and e == s
-            late = moved and not early and e == prev_sym
-            acc += -1 if early else (1 if late else 0)
+        # detector stage (registered values from the previous clock)
+        new_up = new_dn = 0
+        if h1:
+            moved = s1 != prev_sym
+            early = moved and e1 == s1
+            late = moved and not early and e1 == prev_sym
             early_n += early
             late_n += late
-            corr = 0
+            acc += -1 if early else (1 if late else 0)
             if acc == 8:
-                corr, acc = 1, 0
+                new_up, acc = 1, 0
             elif acc == -8:
-                corr, acc = -1, 0
-            out.append(s)
-            prev_sym = s
-            pos = pos + 28 + pending     # the step lands one symbol later
-            pending = corr
+                new_dn, acc = 1, 0
+            prev_sym = s1
+        # emit stage
+        h1 = pos < 512
+        if h1:
+            s1 = int(buf[8 + (pos >> 6)])
+            e1 = int(buf[(pos + 242) >> 6])
+            out.append(s1)
+            pos = pos + 28 + up - dn
+            up, dn = 0, 0
         else:
             pos -= 512
+        up |= new_up
+        dn |= new_dn
         prv = w
     return np.array(out, np.uint8), early_n, late_n
 

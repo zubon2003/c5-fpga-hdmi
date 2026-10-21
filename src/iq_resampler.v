@@ -13,8 +13,10 @@
 // centre: move earlier), E == previous symbol means it came after E (move
 // later); a mixed E (pins mid-transition) does not vote. Eight net votes
 // move pos by one unit (23 ps), far faster than the ~30 ppm drift needs.
-// The step is applied at the next symbol, which keeps the detector out of
-// the pos feedback path (timing at 84.375 MHz).
+// The samples are registered before the detector, and its step is applied
+// at a later symbol, which keeps the detector out of the pos feedback path
+// (timing at 84.375 MHz). The loop delay of two symbols does not matter
+// against the ~0.016 units per symbol it has to follow.
 module iq_resampler (
     input  wire        clk,
     input  wire        rst,
@@ -41,36 +43,49 @@ module iq_resampler (
     wire [7:0] s = buf16[s_idx * 8 +: 8];
     wire [7:0] e = buf16[e_idx * 8 +: 8];
 
-    wire moved = (s != prev_sym);
-    wire early = moved && (e == s);
-    wire late  = moved && !early && (e == prev_sym);
+    // Detector stage: the symbol emitted last clock and its edge sample.
+    reg        h1;
+    reg  [7:0] s1, e1;
+    wire moved = (s1 != prev_sym);
+    wire early = h1 && moved && (e1 == s1);
+    wire late  = h1 && moved && !(e1 == s1) && (e1 == prev_sym);
     wire signed [4:0] acc_v = acc + (early ? -5'sd1 : late ? 5'sd1 : 5'sd0);
     wire step_up   = (acc_v == 5'sd8);
     wire step_down = (acc_v == -5'sd8);
 
-    reg [15:0] win_cnt, e_acc, l_acc;
-
     always @(posedge clk) begin
         prv       <= win;
         sym_valid <= 1'b0;
+        h1        <= 1'b0;
         if (rst) begin
             pos      <= 10'd0;
             acc      <= 5'sd0;
             prev_sym <= 8'd0;
             corr_up  <= 1'b0;
             corr_dn  <= 1'b0;
-        end else if (here) begin
-            sym       <= s;
-            sym_valid <= 1'b1;
-            prev_sym  <= s;
-            acc       <= (step_up || step_down) ? 5'sd0 : acc_v;
-            corr_up   <= step_up;
-            corr_dn   <= step_down;
-            pos       <= pos + STEP + {9'd0, corr_up} - {9'd0, corr_dn};
         end else begin
-            pos <= pos - 10'd512;
+            if (here) begin
+                sym       <= s;
+                sym_valid <= 1'b1;
+                h1        <= 1'b1;
+                s1        <= s;
+                e1        <= e;
+                pos       <= pos + STEP + {9'd0, corr_up} - {9'd0, corr_dn};
+                corr_up   <= 1'b0;
+                corr_dn   <= 1'b0;
+            end else begin
+                pos <= pos - 10'd512;
+            end
+            if (h1) begin
+                prev_sym <= s1;
+                acc      <= (step_up || step_down) ? 5'sd0 : acc_v;
+                if (step_up)   corr_up <= 1'b1;
+                if (step_down) corr_dn <= 1'b1;
+            end
         end
     end
+
+    reg [15:0] win_cnt, e_acc, l_acc;
 
     always @(posedge clk) begin
         win_cnt <= win_cnt + 16'd1;
@@ -79,7 +94,7 @@ module iq_resampler (
             late_cnt  <= l_acc;
             e_acc <= 0;
             l_acc <= 0;
-        end else if (here && !rst) begin
+        end else if (!rst) begin
             e_acc <= e_acc + (early ? 16'd1 : 16'd0);
             l_acc <= l_acc + (late ? 16'd1 : 16'd0);
         end
