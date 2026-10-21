@@ -28,9 +28,12 @@
 // U = -Re(M conj(R)), V = Im(M conj(R)), normalised to the burst (the
 // display inverts V by default: that gave natural hues on the board).
 // Pixels: 640 per line from act (default 9.4 us) after the sync edge,
-// 3 per 20 samples (12 MS/s, 53.3 us), written to a 16-line ring as
+// 3 per 20 samples (12 MS/s, 53.3 us), written to a 32-line ring as
 // {Y, C}: Y 8-bit luma, C signed 8-bit U on even and V on odd pixels;
-// address = {active line [3:0], pixel [9:0]}.
+// address = (active line mod 32) * 640 + pixel. 16 lines were too few: the
+// 720p output uses 66.75 us per field line against 63.56 us coming in, so
+// by the bottom it trails by ~12 lines plus its start and interpolation
+// look-ahead (seen as doubled OSD text in the lowest ~100 rows).
 module video_in (
     input  wire               clk,
     input  wire               rst,
@@ -40,9 +43,9 @@ module video_in (
     input  wire [9:0]         first,
     input  wire [12:0]        act,
     output reg                we,
-    output reg  [13:0]        waddr,
+    output reg  [14:0]        waddr,
     output reg  [15:0]        wdata,
-    output reg                field_tg,     // toggles when active line 0 is written
+    output reg                field_tg,     // toggles when active line 2 is written
     output reg                parity,
     output reg  [15:0]        real_lines,   // real H line starts per field, for display
     output reg  [15:0]        field_lines,  // all line starts per field
@@ -355,7 +358,7 @@ module video_in (
     always @(posedge clk) begin
         we <= n_v;
         if (n_v) begin
-            waddr <= {idx_n[3:0], n_px};
+            waddr <= {idx_n[4:0], 9'd0} + {2'd0, idx_n[4:0], 7'd0} + {5'd0, n_px};   // slot * 640 + px
             if (n_prod < 0)                    wdata[15:8] <= 8'd0;
             else if (n_prod[28:12] > 17'd255)  wdata[15:8] <= 8'd255;
             else                               wdata[15:8] <= n_prod[19:12];
@@ -365,17 +368,19 @@ module video_in (
 
     // Event counts per 2^26 clocks (0.795 s) for the status packet.
     reg [25:0] st_win;
-    reg [15:0] h_cnt, b_cnt, f_cnt, ln_cnt;
-    reg [15:0] h_ps, b_ps, f_ps, ln_ps;
+    reg [15:0] h_cnt, b_cnt, f_cnt, ln_cnt, p1_cnt;
+    reg [15:0] h_ps, b_ps, f_ps, ln_ps, p1_ps;
+    wire       par_new = (fall_gap >= 24'd1271) && (fall_gap < 24'd3813);
     always @(posedge clk) begin
         st_win <= st_win + 26'd1;
         if (&st_win) begin
-            h_ps <= h_cnt; b_ps <= b_cnt; f_ps <= f_cnt; ln_ps <= ln_cnt;
-            h_cnt <= 0; b_cnt <= 0; f_cnt <= 0; ln_cnt <= 0;
+            h_ps <= h_cnt; b_ps <= b_cnt; f_ps <= f_cnt; ln_ps <= ln_cnt; p1_ps <= p1_cnt;
+            h_cnt <= 0; b_cnt <= 0; f_cnt <= 0; ln_cnt <= 0; p1_cnt <= 0;
         end else begin
             if (is_h)              h_cnt  <= h_cnt + 16'd1;
             if (is_broad)          b_cnt  <= b_cnt + 16'd1;
             if (is_broad && !in_v) f_cnt  <= f_cnt + 16'd1;
+            if (is_broad && !in_v && par_new) p1_cnt <= p1_cnt + 16'd1;   // second fields
             if (n_v)               ln_cnt <= ln_cnt + 16'd1;   // pixels written
         end
     end
@@ -385,12 +390,13 @@ module video_in (
         c_dbg[15:0], f_ps, b_ps, h_ps,      // 207:144  last |B|/16
         {3'd0, gain}, {2'd0, s_avg},        // 143:112
         {2'd0, thr}, {2'd0, black_f}, {2'd0, tip_f}, {2'd0, black},   // 111:48
-        {11'd0, lvl_n}, {6'd0, n},          // 47:16
+        {p1_ps[10:0], lvl_n}, {6'd0, n},    // 47:16  (fields with parity 1 | lvl_n)
         real_lines                          // 15:0
     };
 
     always @(posedge clk) begin
         if (rst) field_tg <= 1'b0;
-        else if (n_v && idx_n == 10'd0 && n_px == 10'd639) field_tg <= ~field_tg;
+        // after active line 2: the display reads one line ahead to interpolate
+        else if (n_v && idx_n == 10'd2 && n_px == 10'd639) field_tg <= ~field_tg;
     end
 endmodule

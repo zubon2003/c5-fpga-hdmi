@@ -1,12 +1,12 @@
 // IQ logic analyser in the 84.375 MHz domain.
 //
 // UART commands:
-//   'C'  raw: 4096 clocks of 8 samples (32768 samples at 675 MS/s, 49 us)
-//   'S'  symbols: 32768 resampler outputs (~80 MS/s, 410 us)
-//   'B'  both: 8192 demodulator outputs as 32-bit words, bits 7..0 the IQ
-//        byte and bits 31..16 the signed vid it produced (102 us)
+//   'C'  raw: 2048 clocks of 8 samples (16384 samples at 675 MS/s, 24 us)
+//   'S'  symbols: 16384 resampler outputs (~80 MS/s, 205 us)
+//   'B'  both: 4096 demodulator outputs as 32-bit words, bits 7..0 the IQ
+//        byte and bits 31..16 the signed vid it produced (51 us)
 //   'T'  status: 32 bytes of the status input (video_in), little endian
-//   'G'  chroma debug: 8192 32-bit words of the chroma stage (see chroma.v)
+//   'G'  chroma debug: 4096 32-bit words of the chroma stage (see chroma.v)
 // Reply: "IQL", the mode letter, the byte count (u32 LE), then the bytes in
 // time order. Bytes are spaced GAP clocks apart: the Dock's BL616 USB-UART
 // bridge forwards only ~27 kB/s and silently drops the rest of a 1 Mbaud
@@ -15,7 +15,7 @@
 // It also counts per-pin transitions over 2^20 clocks (12.4 ms) for the
 // HDMI activity bars.
 module iq_la #(
-    parameter DEPTH_LOG2 = 12,         // 64-bit words (16 BSRAM; 13 did not leave room for colour)
+    parameter DEPTH_LOG2 = 11,         // 64-bit words (8 BSRAM; the 32-line picture ring needs the rest)
     parameter GAP        = 4219        // 50 us at 84.375 MHz -> ~16.7 kB/s
 ) (
     input  wire         clk,

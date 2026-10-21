@@ -99,7 +99,7 @@ module top (
     reg        pic_mode_iq = 1'b1;
     reg [9:0]  first_line  = 10'd16;
     reg [12:0] act_start   = 13'd752;
-    reg        par_inv     = 1'b0;
+    reg        par_inv     = 1'b1;     // measured: OSD edge moves 1 line between fields, 2 with 0
     reg        color_on    = 1'b1;
     reg        v_inv       = 1'b1;     // natural hues on the board (skin, yellow box)
     reg [3:0]  sat         = 4'd4;     // 1x
@@ -124,7 +124,7 @@ module top (
     end
 
     wire        lb_we;
-    wire [13:0] lb_waddr;
+    wire [14:0] lb_waddr;
     wire [15:0] lb_wdata;
     wire        field_tg, field_parity;
     wire [15:0] real_lines, field_lines;
@@ -173,7 +173,7 @@ module top (
         .triggered(sc_trig)
     );
 
-    wire [13:0] pic_addr;
+    wire [14:0] pic_addr;
     wire [15:0] pic;
     line_buffer u_lbuf (
         .wclk(clk_iq), .we(lb_we), .waddr(lb_waddr), .wdata(lb_wdata),

@@ -37,7 +37,7 @@ CAP_DIR = os.path.join(ROOT, "captures")
 CMD_FILE = os.path.join(CAP_DIR, "viewer_cmd.txt")
 LOG_FILE = os.path.join(CAP_DIR, "viewer_log.txt")
 KEYS = "PWudhlfcvaz[]"
-DEFAULTS = {"mode": "P", "first": 16, "act": 752, "f": 0, "c": 1, "v": 1, "sat": 4, "hue": 0}   # as in src/top.v
+DEFAULTS = {"mode": "P", "first": 16, "act": 752, "f": 1, "c": 1, "v": 1, "sat": 4, "hue": 0}   # as in src/top.v
 
 
 def write_png(path, rgb, w=W, h=H):
@@ -168,12 +168,13 @@ class Viewer:
             return
         w = struct.unpack("<16H", data[8:])
         sgn = lambda v: v - 0x4000 if v & 0x2000 else v      # 14-bit signed
-        names = ["real_lines", "n", "lvl_n", "black", "tip_f", "black_f", "thr", "s_avg",
+        names = ["real_lines", "n", "par1_fields|lvl_n", "black", "tip_f", "black_f", "thr", "s_avg",
                  "gain", "h/0.8s", "broad/0.8s", "fields/0.8s", "burst|B|/16", "nco_off", "|R|", "gc/4"]
         vals = list(w)
         for k in (3, 4, 5, 6, 7):
             vals[k] = sgn(vals[k])
         vals[13] = vals[13] - 0x10000 if vals[13] & 0x8000 else vals[13]
+        vals[2] = f"{vals[2] >> 5}|{vals[2] & 31}"
         self.log("status " + " ".join(f"{n}={v}" for n, v in zip(names, vals)))
 
     def snapshot(self, path):

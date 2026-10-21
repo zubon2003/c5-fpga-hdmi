@@ -8,10 +8,17 @@
 // The scope RAM is read with address x at stage 0, its data arrives with
 // stage 1. Counts come from the IQ domain and are only displayed.
 //
-// Picture mode (pic_mode = 1) shows the decoded picture instead: output
-// line y shows field line y / 3 (one more output line for the second field,
-// half an input line lower), read from the line buffer at
-// {line [3:0], x / 2}: Y and C, C = U on even and V on odd stored pixels.
+// Picture mode (pic_mode = 1) shows the decoded picture instead, scaled
+// 240 -> 720 lines with vertical interpolation: field 1 line k is centred
+// on output row 3k + 1, field 2 (half a field line lower) on 3k + 2.5, so
+// the two fields no longer jump against each other (whole-line tripling
+// left a 0.5 line jump between fields, seen as a regular 1-line jitter).
+// Each stored pixel covers two output pixels, so the line buffer is read
+// twice per stored pixel: the upper line A on even and the lower line B on
+// odd x, one stored pixel ahead; the blend of the pair is ready after the
+// odd read (the picture moves one output pixel right, which is harmless).
+// Weights are sixths of a line, rounded to sixteenths.
+// C = U on even and V on odd stored pixels.
 // RGB = Y + (1.125 V), Y - 0.39 U - 0.58 V, Y + 2 U (shift-add BT.601).
 module display (
     input  wire               clk,
@@ -32,7 +39,7 @@ module display (
     input  wire               v_inv,
     input  wire [3:0]         sat,          // colour gain in quarters (4 = 1x)
     input  wire [4:0]         hue,          // colour rotation, 11.25 degree steps
-    output reg  [13:0]        pic_addr,
+    output reg  [14:0]        pic_addr,
     input  wire [15:0]        pic,
     output reg  [23:0]        rgb,
     output reg                de_o,
@@ -69,17 +76,41 @@ module display (
         if (x == 2) len <= (cnt > 13'd1260) ? 11'd1260 : cnt[10:0];
     end
 
-    // ---- picture: field line for this output line ----
-    reg [7:0] src;
-    reg [1:0] c3;
+    // ---- picture: source lines and weight for this output line ----
+    // position in sixths of a field line: 2y - 2 (field 1), 2y - 5 (field 2)
+    // = 6 i + w, i the upper line (may be -1 at the top), w = 0..5.
+    reg signed [9:0] li;
+    reg [2:0]        lw;
     always @(posedge clk) begin
         if (line_start) begin
-            if (y == 0)       begin src <= 0;          c3 <= parity ? 2'd3 : 2'd0; end
-            else if (c3 == 2) begin src <= src + 8'd1; c3 <= 2'd0;                 end
-            else                     c3 <= c3 + 2'd1;
+            if (y == 0) begin
+                li <= -10'sd1;
+                lw <= parity ? 3'd1 : 3'd4;
+            end else if (lw >= 3'd4) begin
+                li <= li + 10'sd1;
+                lw <= lw - 3'd4;            // + 2 - 6
+            end else begin
+                lw <= lw + 3'd2;
+            end
         end
     end
-    always @(*) pic_addr = {src[3:0], x[10:1]};
+    wire [7:0] line_a = (li < 0) ? 8'd0 : (li > 10'sd239) ? 8'd239 : li[7:0];
+    wire [7:0] line_b = (li < -10'sd1) ? 8'd0 : (li > 10'sd238) ? 8'd239 : li[7:0] + 8'd1;
+    reg  [4:0] wb;                          // weight of B in sixteenths
+    always @(*) begin
+        case (lw)
+            3'd0: wb = 5'd0;
+            3'd1: wb = 5'd3;
+            3'd2: wb = 5'd5;
+            3'd3: wb = 5'd8;
+            3'd4: wb = 5'd11;
+            default: wb = 5'd13;
+        endcase
+    end
+    wire [10:0] px_ahead = {1'b0, x[10:1]} + 11'd1;
+    wire [9:0]  px_rd    = (px_ahead > 11'd639) ? 10'd639 : px_ahead[9:0];
+    wire [4:0]  slot = x[0] ? line_b[4:0] : line_a[4:0];
+    always @(*) pic_addr = {slot, 9'd0} + {2'd0, slot, 7'd0} + {5'd0, px_rd};   // slot * 640 + px
 
     // ---- stage 1 ----
     reg [10:0] x1;
@@ -108,12 +139,31 @@ module display (
     reg  [9:0] y2;
     reg        de2, hs2, vs2, sc2, grid2, led2, bar2, mark2;
     reg  [3:0] r2;
-    // Picture colour: pic belongs to x1; U and V are held from the last even
-    // and odd stored pixel.
-    reg signed [7:0] cu_l, cv_l;
+    // Picture: pic belongs to x1 (A on even, B on odd x1). After the B read
+    // the pair's blend is registered; U and V are held from the last even
+    // and odd stored pixel (stored pixel x1 / 2 + 1, so even when x1[1] = 1).
+    reg  [7:0]        a_y;
+    reg  signed [7:0] a_c;
+    reg  [4:0]        wb1;
     always @(posedge clk) begin
-        if (!x1[1]) cu_l <= pic[7:0];
-        else        cv_l <= v_inv ? -$signed(pic[7:0]) : $signed(pic[7:0]);
+        wb1 <= wb;
+        if (!x1[0]) begin
+            a_y <= pic[15:8];
+            a_c <= pic[7:0];
+        end
+    end
+    wire [5:0]         wa1  = 6'd16 - {1'b0, wb1};
+    wire [13:0]        y_bl = a_y * wa1 + pic[15:8] * wb1;
+    wire signed [13:0] c_bl = a_c * $signed({1'b0, wa1}) + $signed(pic[7:0]) * $signed({2'b00, wb1});
+    wire signed [7:0]  c_b8 = c_bl >>> 4;
+    reg  [7:0]         yb;
+    reg signed [7:0]   cu_l, cv_l;
+    always @(posedge clk) begin
+        if (x1[0]) begin
+            yb <= y_bl[11:4];
+            if (x1[1]) cu_l <= c_b8;
+            else       cv_l <= v_inv ? -c_b8 : c_b8;
+        end
     end
     // Hue rotation (cos / sin of hue * 11.25 degrees, 64 = 1), one stage.
     reg signed [7:0] hc, hs;
@@ -199,15 +249,13 @@ module display (
     wire signed [19:0] ru_w = cu_l * hcs - cv_l * hss;
     wire signed [19:0] rv_w = cu_l * hss + cv_l * hcs;
     reg  signed [10:0] pu_c, pv_c;
-    reg  [7:0]         py_d;
     always @(posedge clk) begin
         pu_c <= (ru_w >>> 8) > 20'sd511 ? 11'sd511 : (ru_w >>> 8) < -20'sd511 ? -11'sd511 : ru_w[18:8];
         pv_c <= (rv_w >>> 8) > 20'sd511 ? 11'sd511 : (rv_w >>> 8) < -20'sd511 ? -11'sd511 : rv_w[18:8];
-        py_d <= pic[15:8];
     end
     // RGB from the rotated chroma (stage 3; chroma is half resolution, so
     // its extra clock against luma does not matter).
-    wire signed [9:0]  py = {2'b00, py_d};
+    wire signed [9:0]  py = {2'b00, yb};
     wire signed [9:0]  pu = color_on ? pu_c[9:0] : 10'sd0;
     wire signed [9:0]  pv = color_on ? pv_c[9:0] : 10'sd0;
     wire signed [10:0] rr = py + pv + (pv >>> 3);
