@@ -205,6 +205,10 @@ C5 側のファーム（ゲイン、AFC、チャンネル）は変えずに、FP
 | ESP32-C5 GPIO | 1 | 0 | 25 | 7 | 10 | 5 | 3 | 4 |
 | 内容 | Q | Q | Q | Q 符号 | I | I | I | I 符号 |
 
+## ライセンス
+
+GPL-3.0-only — [LICENSE](LICENSE) を参照。
+
 ## クレジット
 
 This project adapts the ESP32-C5 MODEM_DIAG IQ GPIO routing (Q4/I4 lane
