@@ -1,5 +1,7 @@
 # c5-fpga-hdmi
 
+[日本語の README](README.ja.md)
+
 > **Experimental — close range only.** This has only been seen working with
 > the VTX a short distance (about 1 m, on a desk) from the receiver. Range,
 > weak-signal behaviour, other VTXs and other channels have not been tested.
