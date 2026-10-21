@@ -6,8 +6,8 @@
 //   samples); the threshold is a quarter of the way up from the sync level.
 //   A trigger is a drop below the threshold after >= 2400 samples (30 us)
 //   above it, i.e. the start of a horizontal sync pulse. On the first
-//   trigger after each arm (one per HDMI frame), 720 samples decimated by 7
-//   (11.43 MS/s, 63.0 us: one NTSC line) are written to the line RAM.
+//   trigger after each arm (one per HDMI frame), 1280 samples decimated by
+//   4 (20 MS/s, 64 us: one NTSC line) are written to the line RAM.
 // Pixel domain: rd = line RAM [x], one clock of latency.
 module scope_line (
     input  wire               clk_iq,
@@ -16,12 +16,12 @@ module scope_line (
     input  wire signed [13:0] vid,
     input  wire               clk_pixel,
     input  wire               arm,          // pixel domain, pulse once per frame
-    input  wire [9:0]         rd_addr,
+    input  wire [10:0]        rd_addr,
     output reg  signed [13:0] rd,
     output reg                triggered     // IQ domain: a trigger in the last ~0.8 ms
 );
-    reg signed [13:0] ram [0:1023];
-    reg [9:0]         waddr;
+    reg signed [13:0] ram [0:2047];
+    reg [10:0]        waddr;
     reg               we;
     reg signed [13:0] wdata;
 
@@ -39,7 +39,7 @@ module scope_line (
     reg [7:0]  decay;
     reg [11:0] above;
     reg        armed, writing;
-    reg [2:0]  dec;
+    reg [1:0]  dec;
     reg [16:0] trig_age;
 
     always @(posedge clk_iq) begin
@@ -67,19 +67,19 @@ module scope_line (
                         if (armed && !writing) begin
                             armed   <= 1'b0;
                             writing <= 1'b1;
-                            waddr   <= 10'h3ff;     // first write wraps to 0
-                            dec     <= 3'd0;
+                            waddr   <= 11'h7ff;     // first write wraps to 0
+                            dec     <= 2'd0;
                         end
                     end
                 end
 
                 if (writing) begin
-                    dec <= (dec == 3'd6) ? 3'd0 : dec + 3'd1;
-                    if (dec == 3'd0) begin
+                    dec <= dec + 2'd1;
+                    if (dec == 2'd0) begin
                         we    <= 1'b1;
                         wdata <= vid;
-                        waddr <= waddr + 10'd1;
-                        if (waddr == 10'd718) writing <= 1'b0;   // this write is 719
+                        waddr <= waddr + 11'd1;
+                        if (waddr == 11'd1278) writing <= 1'b0;   // this write is 1279
                     end
                 end
             end

@@ -1,9 +1,8 @@
-// Tang Primer 25K Dock: IQ logic analyser + 720x480p HDMI.
-//   J6 (PMOD DVI): HDMI out, test pattern with per-pin IQ activity bars
+// Tang Primer 25K Dock: C5 IQ -> FM demodulator, 1280x720p HDMI.
+//   J6 (PMOD DVI): HDMI out, waveform monitor and per-pin IQ activity bars
 //   J4: the 8 IQ inputs from the XIAO ESP32-C5 (see top.cst)
 //   Debugger UART (COM4, 1 Mbaud): 'C' dumps raw 675 MS/s samples,
 //   'S' the resampled ~80 MS/s symbols, 'B' symbols with the FM output
-//   Top of the screen: waveform monitor of the demodulated video
 module top (
     input  wire       clk,          // 50 MHz
     output wire       led,
@@ -16,7 +15,7 @@ module top (
 );
     wire clk_5x, clk_iq_fast, pll_lock, clk_pixel, clk_iq;
 
-    pll_135 u_pll (.clkin(clk), .clkout0(clk_5x), .clkout1(clk_iq_fast), .lock(pll_lock));
+    pll u_pll (.clkin(clk), .clkout0(clk_5x), .clkout1(clk_iq_fast), .lock(pll_lock));
 
     // IQ domain: IDES8 at 337.5 MHz DDR, 8 samples per 84.375 MHz clock.
     CLKDIV u_div_iq (.CLKOUT(clk_iq), .HCLKIN(clk_iq_fast), .RESETN(pll_lock), .CALIB(1'b0));
@@ -86,22 +85,14 @@ module top (
     );
 
     // ---- Video ----
-    wire [9:0] x, y;
-    wire de, hsync, vsync, frame_start;
+    wire [10:0] x;
+    wire [9:0]  y;
+    wire de, hsync, vsync, frame_start, line_start;
     video_timing u_timing (
         .clk(clk_pixel), .rst(rst), .x(x), .y(y), .de(de),
-        .hsync(hsync), .vsync(vsync), .frame_start(frame_start)
+        .hsync(hsync), .vsync(vsync), .frame_start(frame_start), .line_start(line_start)
     );
 
-    wire [7:0] pr, pg, pb;
-    test_pattern u_pattern (
-        .clk(clk_pixel), .rst(rst), .x(x), .y(y), .frame_start(frame_start),
-        .r(pr), .g(pg), .b(pb)
-    );
-
-    // Waveform monitor on the top 320 rows: one demodulated line per frame,
-    // triggered on horizontal sync, 87.5 ns per pixel (63.0 us across).
-    // y = 160 - vid / 8, so the scale is 25.6 px per MHz.
     wire signed [13:0] sc_rd;
     wire               sc_trig;
     scope_line u_scope (
@@ -110,87 +101,15 @@ module top (
         .triggered(sc_trig)
     );
 
-    reg  [9:0] x_d, y_d;
-    reg  [9:0] ty_prev;
-    wire signed [13:0] ty_s = 14'sd160 - (sc_rd >>> 3);
-    wire [9:0] ty = (ty_s < 0) ? 10'd0 : (ty_s > 14'sd319) ? 10'd319 : ty_s[9:0];
-    always @(posedge clk_pixel) begin
-        x_d     <= x;
-        y_d     <= y;
-        ty_prev <= ty;
-    end
-    wire [9:0] t_lo = (ty < ty_prev) ? ty : ty_prev;
-    wire [9:0] t_hi = (ty < ty_prev) ? ty_prev : ty;
-    wire sc_area  = (y_d < 320) && (x_d < 720);
-    wire sc_trace = (x_d > 0) && (y_d >= t_lo) && (y_d <= t_hi);
-    wire sc_grid  = (y_d == 160) || (x_d == 114) || (x_d == 229) || (x_d == 343) ||
-                    (x_d == 457) || (x_d == 571) || (x_d == 686);
-    wire sc_led   = (x_d >= 700) && (x_d < 714) && (y_d >= 6) && (y_d < 20);
-    reg  [23:0] sc_rgb;
-    always @(*) begin
-        if (sc_led)        sc_rgb = sc_trig ? 24'h20d040 : 24'hd03020;   // sync trigger seen
-        else if (sc_trace) sc_rgb = 24'hf0f070;
-        else if (sc_grid)  sc_rgb = 24'h303840;
-        else               sc_rgb = 24'h0c1014;
-    end
-
-    // Bars over the ramp, row n at y = 332 + 14n, 11 px high:
-    //   rows 0..7  IQ bit n, transitions per 12.4 ms / 1024
-    //   rows 8, 9  resampler early / late votes per 0.78 ms / 128
-    // Clipped at 700 px. The counts are written in the IQ domain and only
-    // displayed, so they are read here without synchronisation.
-    reg [3:0] row;
-    reg       in_row;
-    integer n;
-    always @(*) begin
-        row    = 4'd0;
-        in_row = 1'b0;
-        for (n = 0; n < 10; n = n + 1)
-            if (y >= 332 + 14 * n && y < 343 + 14 * n) begin
-                row    = n;
-                in_row = 1'b1;
-            end
-    end
-    reg [11:0] raw_len;
-    always @(*) begin
-        case (row)
-            4'd8:    raw_len = {3'd0, early_cnt[15:7]};
-            4'd9:    raw_len = {3'd0, late_cnt[15:7]};
-            default: raw_len = activity[row[2:0] * 22 + 10 +: 12];
-        endcase
-    end
-    wire [11:0] len = (raw_len > 12'd700) ? 12'd700 : raw_len;
-    wire in_region = (y >= 328) && (y < 476) && (x > 0) && (x < 719);
-
-    reg        ov_en;
-    reg [23:0] ov_rgb;
-    always @(posedge clk_pixel) begin
-        ov_en <= in_region;
-        if (in_row && x >= 10 && x < 10 + len)
-            case (row)
-                4'd3:    ov_rgb <= 24'hff8000;   // Q sign
-                4'd7:    ov_rgb <= 24'h4080ff;   // I sign
-                4'd8:    ov_rgb <= 24'he04060;   // early votes
-                4'd9:    ov_rgb <= 24'h60c040;   // late votes
-                default: ov_rgb <= row[2] ? 24'h00e0e0 : 24'he0e000;
-            endcase
-        else if (in_row && x < 10)
-            ov_rgb <= row[3] ? 24'h404040 : row[2] ? 24'h006060 : 24'h606000;   // row marker
-        else
-            ov_rgb <= 24'h000000;
-    end
-
-    wire [7:0] r = sc_area ? sc_rgb[23:16] : ov_en ? ov_rgb[23:16] : pr;
-    wire [7:0] g = sc_area ? sc_rgb[15:8]  : ov_en ? ov_rgb[15:8]  : pg;
-    wire [7:0] b = sc_area ? sc_rgb[7:0]   : ov_en ? ov_rgb[7:0]   : pb;
-
-    // The pattern and overlay have one clock of latency; delay the controls.
-    reg de_d, hsync_d, vsync_d;
-    always @(posedge clk_pixel) begin
-        de_d    <= de;
-        hsync_d <= hsync;
-        vsync_d <= vsync;
-    end
+    wire [23:0] rgb;
+    wire        de_d, hsync_d, vsync_d;
+    display u_display (
+        .clk(clk_pixel), .x(x), .y(y), .de(de), .hsync(hsync), .vsync(vsync),
+        .line_start(line_start), .activity(activity), .early_cnt(early_cnt),
+        .late_cnt(late_cnt), .sc_rd(sc_rd), .sc_trig(sc_trig),
+        .rgb(rgb), .de_o(de_d), .hsync_o(hsync_d), .vsync_o(vsync_d)
+    );
+    wire [7:0] r = rgb[23:16], g = rgb[15:8], b = rgb[7:0];
 
     wire [9:0] sym_b, sym_g, sym_r;
     tmds_encoder u_enc_b (.clk(clk_pixel), .rst(rst), .de(de_d), .ctrl({vsync_d, hsync_d}), .din(b), .dout(sym_b));

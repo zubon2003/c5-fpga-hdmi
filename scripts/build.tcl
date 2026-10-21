@@ -5,9 +5,9 @@ set_option -output_base_name c5_fpga_hdmi
 set_option -use_cpu_as_gpio 1
 set_option -use_sspi_as_gpio 1
 add_file src/top.v
-add_file src/pll_135.v
+add_file src/pll.v
 add_file src/video_timing.v
-add_file src/test_pattern.v
+add_file src/display.v
 add_file src/tmds_encoder.v
 add_file src/dvi_tx.v
 add_file src/uart.v
