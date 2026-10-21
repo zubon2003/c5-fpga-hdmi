@@ -3,7 +3,11 @@
 //   J4: the 8 IQ inputs from the XIAO ESP32-C5 (see top.cst)
 //   Debugger UART (COM4, 1 Mbaud): 'C' dumps raw 675 MS/s samples,
 //   'S' the resampled ~80 MS/s symbols, 'B' symbols with the FM output,
-//   'P' picture display, 'W' waveform monitor display
+//   'T' the sync separator status,
+//   'P' picture display, 'W' waveform monitor display,
+//   'u' / 'd' first active line -/+ 1, 'h' / 'l' picture start -/+ 16 samples
+//   (0.2 us), 'f' field offset direction, 'c' colour on/off, 'v' V sign,
+//   'a' / 'z' colour saturation +/- 0.25x, '[' / ']' hue -/+ 11.25 degrees
 module top (
     input  wire       clk,          // 50 MHz
     output wire       led,
@@ -63,11 +67,15 @@ module top (
     wire               fm_valid;
     wire signed [13:0] fm_vid;
     wire [7:0]         fm_sym;
+    wire signed [9:0]  fm_d;
     fm_demod u_fm (
         .clk(clk_iq), .rst(rst_iq), .in_valid(sym_valid), .sym(sym),
-        .out_valid(fm_valid), .vid(fm_vid), .sym_out(fm_sym)
+        .out_valid(fm_valid), .vid(fm_vid), .sym_out(fm_sym), .d_out(fm_d)
     );
 
+    wire [255:0] vin_status;   // from video_in below
+    wire         cdbg_v;
+    wire [31:0]  cdbg_w;
     wire       rx_valid, tx_valid, tx_ready, la_busy;
     wire [7:0] rx_data, tx_data;
     wire [175:0] activity;
@@ -79,39 +87,72 @@ module top (
 
     iq_la u_la (
         .clk(clk_iq), .rst(rst_iq), .win(win), .sym_valid(sym_valid), .sym(sym),
-        .fm_valid(fm_valid), .fm_vid(fm_vid), .fm_sym(fm_sym),
+        .fm_valid(fm_valid), .fm_vid(fm_vid), .fm_sym(fm_sym), .status(vin_status),
+        .g_valid(cdbg_v), .g_word(cdbg_w),
         .rx_valid(rx_valid), .rx_data(rx_data),
         .tx_valid(tx_valid), .tx_data(tx_data), .tx_ready(tx_ready),
         .busy(la_busy), .activity(activity)
     );
 
     // ---- NTSC sync separation and line sampling (IQ domain) ----
+    // Runtime settings from the UART (IQ domain).
+    reg        pic_mode_iq = 1'b1;
+    reg [9:0]  first_line  = 10'd16;
+    reg [12:0] act_start   = 13'd752;
+    reg        par_inv     = 1'b0;
+    reg        color_on    = 1'b1;
+    reg        v_inv       = 1'b1;     // natural hues on the board (skin, yellow box)
+    reg [3:0]  sat         = 4'd4;     // 1x
+    reg [4:0]  hue         = 5'd0;
+    always @(posedge clk_iq) if (rx_valid) begin
+        case (rx_data)
+            "P": pic_mode_iq <= 1'b1;
+            "W": pic_mode_iq <= 1'b0;
+            "u": if (first_line != 0)       first_line <= first_line - 10'd1;
+            "d": if (first_line != 10'd60)  first_line <= first_line + 10'd1;
+            "h": if (act_start > 13'd600)   act_start  <= act_start - 13'd16;
+            "l": if (act_start < 13'd1100)  act_start  <= act_start + 13'd16;
+            "f": par_inv  <= ~par_inv;
+            "c": color_on <= ~color_on;
+            "v": v_inv    <= ~v_inv;
+            "a": if (sat != 4'd15) sat <= sat + 4'd1;
+            "z": if (sat != 4'd0)  sat <= sat - 4'd1;
+            "[": hue <= hue - 5'd1;
+            "]": hue <= hue + 5'd1;
+            default: ;
+        endcase
+    end
+
     wire        lb_we;
-    wire [14:0] lb_waddr;
-    wire [7:0]  lb_wdata;
+    wire [13:0] lb_waddr;
+    wire [15:0] lb_wdata;
     wire        field_tg, field_parity;
     wire [15:0] real_lines, field_lines;
     video_in u_vin (
-        .clk(clk_iq), .rst(rst_iq), .in_valid(fm_valid), .vid(fm_vid),
+        .clk(clk_iq), .rst(rst_iq), .in_valid(fm_valid), .vid(fm_vid), .d(fm_d),
+        .first(first_line), .act(act_start),
         .we(lb_we), .waddr(lb_waddr), .wdata(lb_wdata),
         .field_tg(field_tg), .parity(field_parity),
-        .real_lines(real_lines), .field_lines(field_lines)
+        .real_lines(real_lines), .field_lines(field_lines), .status(vin_status),
+        .cdbg_v(cdbg_v), .cdbg_w(cdbg_w)
     );
 
-    // Display mode from the UART: 'P' picture (default), 'W' waveform.
-    reg pic_mode_iq = 1'b1;
-    always @(posedge clk_iq) if (rx_valid) begin
-        if (rx_data == "P") pic_mode_iq <= 1'b1;
-        if (rx_data == "W") pic_mode_iq <= 1'b0;
-    end
-
-    // To the pixel domain: field start (edge of the toggle), parity, mode.
+    // To the pixel domain: field start (edge of the toggle), quasi-static
+    // settings through two flip-flops.
     reg [2:0] field_s;
-    reg [1:0] parity_s, mode_s;
+    reg [1:0] parity_s, mode_s, color_s, vinv_s;
+    reg [3:0] sat_s1, sat_s2;
+    reg [4:0] hue_s1, hue_s2;
     always @(posedge clk_pixel) begin
         field_s  <= {field_s[1:0], field_tg};
-        parity_s <= {parity_s[0], field_parity};
+        parity_s <= {parity_s[0], field_parity ^ par_inv};
         mode_s   <= {mode_s[0], pic_mode_iq};
+        color_s  <= {color_s[0], color_on};
+        vinv_s   <= {vinv_s[0], v_inv};
+        sat_s1   <= sat;
+        sat_s2   <= sat_s1;
+        hue_s1   <= hue;
+        hue_s2   <= hue_s1;
     end
     wire field_go = field_s[2] ^ field_s[1];
 
@@ -132,8 +173,8 @@ module top (
         .triggered(sc_trig)
     );
 
-    wire [14:0] pic_addr;
-    wire [7:0]  pic;
+    wire [13:0] pic_addr;
+    wire [15:0] pic;
     line_buffer u_lbuf (
         .wclk(clk_iq), .we(lb_we), .waddr(lb_waddr), .wdata(lb_wdata),
         .rclk(clk_pixel), .raddr(pic_addr), .rdata(pic)
@@ -145,7 +186,8 @@ module top (
         .clk(clk_pixel), .x(x), .y(y), .de(de), .hsync(hsync), .vsync(vsync),
         .line_start(line_start), .activity(activity), .early_cnt(early_cnt),
         .late_cnt(late_cnt), .sc_rd(sc_rd), .sc_trig(sc_trig),
-        .pic_mode(mode_s[1]), .parity(parity_s[1]), .pic_addr(pic_addr), .pic(pic),
+        .pic_mode(mode_s[1]), .parity(parity_s[1]), .color_on(color_s[1]), .v_inv(vinv_s[1]), .sat(sat_s2), .hue(hue_s2),
+        .pic_addr(pic_addr), .pic(pic),
         .rgb(rgb), .de_o(de_d), .hsync_o(hsync_d), .vsync_o(vsync_d)
     );
     wire [7:0] r = rgb[23:16], g = rgb[15:8], b = rgb[7:0];

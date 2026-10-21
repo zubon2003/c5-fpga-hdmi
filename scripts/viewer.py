@@ -1,0 +1,277 @@
+"""Live viewer for the FPGA's HDMI output through a UVC capture device,
+with the FPGA's UART settings on the keyboard.
+
+    py -3.13 scripts/viewer.py [--device "C8 USB3.0 Video"] [--port COM4]
+
+Window keys (sent to the FPGA as they are):
+    P picture   W waveform monitor
+    u / d first active line -/+ 1      h / l picture start -/+ 0.2 us
+    f field offset direction           c colour on/off      v V sign
+    a / z colour saturation +/- 0.25x  [ / ] hue -/+ 11.25 degrees
+    s save a snapshot now (captures/snap_<time>.png)         q quit
+
+The viewer keeps the UART open, so other tools go through it. It saves
+captures/live.png once a second and executes lines appended to
+captures/viewer_cmd.txt, logging to captures/viewer_log.txt:
+    key <chars>            send characters to the FPGA
+    cap <C|S|B> <path>     logic-analyser capture (as scripts/iqla.py)
+    snap <path>            save the current frame
+    defaults               forget the tracked settings (after reprogramming)
+    status                 sync separator status (FPGA 'T'), logged
+"""
+import argparse
+import os
+import struct
+import subprocess
+import sys
+import threading
+import time
+import tkinter as tk
+import zlib
+
+import serial
+
+W, H = 1280, 720
+ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+CAP_DIR = os.path.join(ROOT, "captures")
+CMD_FILE = os.path.join(CAP_DIR, "viewer_cmd.txt")
+LOG_FILE = os.path.join(CAP_DIR, "viewer_log.txt")
+KEYS = "PWudhlfcvaz[]"
+DEFAULTS = {"mode": "P", "first": 16, "act": 752, "f": 0, "c": 1, "v": 1, "sat": 4, "hue": 0}   # as in src/top.v
+
+
+def write_png(path, rgb, w=W, h=H):
+    raw = b"".join(b"\x00" + rgb[y * w * 3:(y + 1) * w * 3] for y in range(h))
+
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n"
+                + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(raw, 1))
+                + chunk(b"IEND", b""))
+    os.replace(tmp, path)
+
+
+class Viewer:
+    def __init__(self, device, port):
+        os.makedirs(CAP_DIR, exist_ok=True)
+        self.frame = None
+        self.frames = 0
+        self.lock = threading.Lock()
+        self.ser_lock = threading.Lock()
+        self.running = True
+        self.status = "starting"
+        self.settings = dict(DEFAULTS)
+        self.ser = serial.Serial(port, 1_000_000, timeout=3)
+        if hasattr(self.ser, "set_buffer_size"):
+            self.ser.set_buffer_size(rx_size=1 << 20)
+        open(CMD_FILE, "a").close()
+        self.cmd_pos = os.path.getsize(CMD_FILE)
+
+        self.ff = subprocess.Popen(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-rtbufsize", "200M",
+             "-f", "dshow", "-i", f"video={device}", "-vf", f"scale={W}:{H}",
+             "-r", "30", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+            stdout=subprocess.PIPE, bufsize=W * H * 3 * 2)
+        threading.Thread(target=self.reader, daemon=True).start()
+        threading.Thread(target=self.housekeeping, daemon=True).start()
+
+        self.root = tk.Tk()
+        self.root.title("C5 FPGA HDMI viewer")
+        self.label = tk.Label(self.root)
+        self.label.pack()
+        self.bar = tk.Label(self.root, anchor="w", font=("Consolas", 11))
+        self.bar.pack(fill="x")
+        self.root.bind("<Key>", self.on_key)
+        self.root.protocol("WM_DELETE_WINDOW", self.quit)
+        self.photo = None
+        self.root.after(30, self.redraw)
+
+    def log(self, msg):
+        line = time.strftime("%H:%M:%S ") + msg
+        print(line, flush=True)
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+    def reader(self):
+        n = W * H * 3
+        while self.running:
+            buf = self.ff.stdout.read(n)
+            if len(buf) < n:
+                self.status = "capture stopped"
+                break
+            with self.lock:
+                self.frame = buf
+                self.frames += 1
+
+    def send(self, chars):
+        with self.ser_lock:
+            self.ser.write(chars.encode())
+        s = self.settings
+        for ch in chars:
+            if ch in "PW":
+                s["mode"] = ch
+            elif ch == "u":
+                s["first"] = max(0, s["first"] - 1)
+            elif ch == "d":
+                s["first"] = min(60, s["first"] + 1)
+            elif ch == "h":
+                s["act"] = max(600, s["act"] - 16) if s["act"] > 600 else s["act"]
+            elif ch == "l":
+                s["act"] = min(1100, s["act"] + 16) if s["act"] < 1100 else s["act"]
+            elif ch in "fcv":
+                s[ch] ^= 1
+            elif ch == "a":
+                s["sat"] = min(15, s["sat"] + 1)
+            elif ch == "z":
+                s["sat"] = max(0, s["sat"] - 1)
+            elif ch == "[":
+                s["hue"] = (s["hue"] - 1) % 32
+            elif ch == "]":
+                s["hue"] = (s["hue"] + 1) % 32
+        self.log(f"sent {chars!r} -> {self.describe()}")
+
+    def describe(self):
+        s = self.settings
+        return (f"mode {s['mode']}  first line {s['first']}  start {s['act'] / 80:.2f} us  "
+                f"field flip {s['f']}  colour {s['c']}  V inv {s['v']}  sat {s['sat'] / 4:.2f}x  hue {s['hue'] * 11.25:+.1f} deg")
+
+    def capture(self, mode, path):
+        with self.ser_lock:
+            self.ser.reset_input_buffer()
+            self.ser.write(mode.encode())
+            hdr = self.ser.read(8)
+            if len(hdr) != 8 or hdr[:3] != b"IQL":
+                self.log(f"cap {mode}: bad header {hdr!r}")
+                return
+            need = struct.unpack("<I", hdr[4:])[0]
+            data = bytearray()
+            while len(data) < need:
+                chunk = self.ser.read(need - len(data))
+                if not chunk:
+                    break
+                data += chunk
+        with open(path, "wb") as f:
+            f.write(data)
+        self.log(f"cap {mode}: {len(data)} of {need} bytes -> {path}")
+
+    def status_cmd(self):
+        with self.ser_lock:
+            self.ser.reset_input_buffer()
+            self.ser.write(b"T")
+            data = self.ser.read(40)
+        if len(data) != 40 or data[:4] != b"IQLT":
+            self.log(f"status: bad reply {data[:8]!r} ({len(data)} bytes)")
+            return
+        w = struct.unpack("<16H", data[8:])
+        sgn = lambda v: v - 0x4000 if v & 0x2000 else v      # 14-bit signed
+        names = ["real_lines", "n", "lvl_n", "black", "tip_f", "black_f", "thr", "s_avg",
+                 "gain", "h/0.8s", "broad/0.8s", "fields/0.8s", "burst|B|/16", "nco_off", "|R|", "gc/4"]
+        vals = list(w)
+        for k in (3, 4, 5, 6, 7):
+            vals[k] = sgn(vals[k])
+        vals[13] = vals[13] - 0x10000 if vals[13] & 0x8000 else vals[13]
+        self.log("status " + " ".join(f"{n}={v}" for n, v in zip(names, vals)))
+
+    def snapshot(self, path):
+        with self.lock:
+            frame = self.frame
+        if frame:
+            write_png(path, frame)
+            return True
+        return False
+
+    def housekeeping(self):
+        last_snap = 0
+        while self.running:
+            now = time.time()
+            if now - last_snap >= 1.0:
+                last_snap = now
+                self.snapshot(os.path.join(CAP_DIR, "live.png"))
+            try:
+                size = os.path.getsize(CMD_FILE)
+                if size > self.cmd_pos:
+                    with open(CMD_FILE, encoding="utf-8") as f:
+                        f.seek(self.cmd_pos)
+                        lines = f.read().splitlines()
+                    self.cmd_pos = size
+                    for line in lines:
+                        self.run_command(line.strip())
+                elif size < self.cmd_pos:
+                    self.cmd_pos = size
+            except OSError as e:
+                self.log(f"command file: {e}")
+            time.sleep(0.1)
+
+    def run_command(self, line):
+        if not line:
+            return
+        parts = line.split(maxsplit=2)
+        try:
+            if parts[0] == "key":
+                self.send(parts[1])
+            elif parts[0] == "cap":
+                self.capture(parts[1], os.path.join(ROOT, parts[2]))
+            elif parts[0] == "status":
+                self.status_cmd()
+            elif parts[0] == "defaults":
+                self.settings = dict(DEFAULTS)
+                self.log(f"settings reset -> {self.describe()}")
+            elif parts[0] == "snap":
+                ok = self.snapshot(os.path.join(ROOT, parts[1]))
+                self.log(f"snap {parts[1]}: {'ok' if ok else 'no frame yet'}")
+            else:
+                self.log(f"unknown command: {line}")
+        except Exception as e:  # keep the viewer running
+            self.log(f"command {line!r} failed: {e}")
+
+    def on_key(self, ev):
+        ch = ev.char
+        if ch == "q":
+            self.quit()
+        elif ch == "s":
+            path = os.path.join(CAP_DIR, time.strftime("snap_%H%M%S.png"))
+            self.snapshot(path)
+            self.log(f"snapshot {path}")
+        elif ch and ch in KEYS:
+            threading.Thread(target=self.send, args=(ch,), daemon=True).start()
+
+    def redraw(self):
+        with self.lock:
+            frame, frames = self.frame, self.frames
+        if frame is not None:
+            ppm = f"P6 {W} {H} 255\n".encode() + frame
+            self.photo = tk.PhotoImage(data=ppm, format="PPM")
+            self.label.configure(image=self.photo)
+        self.bar.configure(text=f" {self.describe()}   frames {frames}   {self.status if frame is None else ''}"
+                                f"   keys: P W u d h l f c v a z [ ]  s=snapshot q=quit")
+        if self.running:
+            self.root.after(33, self.redraw)
+
+    def quit(self):
+        self.running = False
+        try:
+            self.ff.kill()
+        except OSError:
+            pass
+        self.ser.close()
+        self.root.destroy()
+
+    def run(self):
+        self.log(f"viewer started: {self.describe()}")
+        self.root.mainloop()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--device", default="C8 USB3.0 Video")
+    ap.add_argument("--port", default="COM4")
+    args = ap.parse_args()
+    Viewer(args.device, args.port).run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,10 +1,12 @@
 // IQ logic analyser in the 84.375 MHz domain.
 //
 // UART commands:
-//   'C'  raw: 8192 clocks of 8 samples (65536 samples at 675 MS/s, 97 us)
-//   'S'  symbols: 65536 resampler outputs (~80 MS/s, 819 us)
-//   'B'  both: 16384 demodulator outputs as 32-bit words, bits 7..0 the IQ
-//        byte and bits 31..16 the signed vid it produced (205 us)
+//   'C'  raw: 4096 clocks of 8 samples (32768 samples at 675 MS/s, 49 us)
+//   'S'  symbols: 32768 resampler outputs (~80 MS/s, 410 us)
+//   'B'  both: 8192 demodulator outputs as 32-bit words, bits 7..0 the IQ
+//        byte and bits 31..16 the signed vid it produced (102 us)
+//   'T'  status: 32 bytes of the status input (video_in), little endian
+//   'G'  chroma debug: 8192 32-bit words of the chroma stage (see chroma.v)
 // Reply: "IQL", the mode letter, the byte count (u32 LE), then the bytes in
 // time order. Bytes are spaced GAP clocks apart: the Dock's BL616 USB-UART
 // bridge forwards only ~27 kB/s and silently drops the rest of a 1 Mbaud
@@ -13,7 +15,7 @@
 // It also counts per-pin transitions over 2^20 clocks (12.4 ms) for the
 // HDMI activity bars.
 module iq_la #(
-    parameter DEPTH_LOG2 = 13,         // 64-bit words
+    parameter DEPTH_LOG2 = 12,         // 64-bit words (16 BSRAM; 13 did not leave room for colour)
     parameter GAP        = 4219        // 50 us at 84.375 MHz -> ~16.7 kB/s
 ) (
     input  wire         clk,
@@ -24,6 +26,9 @@ module iq_la #(
     input  wire         fm_valid,
     input  wire [13:0]  fm_vid,
     input  wire [7:0]   fm_sym,
+    input  wire [255:0] status,
+    input  wire         g_valid,
+    input  wire [31:0]  g_word,
     input  wire         rx_valid,
     input  wire [7:0]   rx_data,
     output reg          tx_valid,
@@ -40,9 +45,12 @@ module iq_la #(
     reg [63:0] rdata, wdata;
     reg        wen;
 
-    localparam S_IDLE = 3'd0, S_CAP = 3'd1, S_HDR = 3'd2, S_RD = 3'd3, S_SEND = 3'd4;
+    localparam S_IDLE = 3'd0, S_CAP = 3'd1, S_HDR = 3'd2, S_RD = 3'd3, S_SEND = 3'd4, S_STAT = 3'd5;
     reg [2:0] state;
-    reg [1:0] mode;          // 0 raw, 1 symbols, 2 both
+    reg [1:0] mode;          // 0 raw, 1 symbols, 2 both / chroma debug, 3 status
+    reg       g_mode;        // mode 2 stores the chroma debug words
+    reg [255:0] st;
+    reg [4:0]   st_i;
     reg [2:0] idx;           // header byte or byte within a word
     reg [1:0] wait_cnt;
 
@@ -58,11 +66,11 @@ module iq_la #(
             3'd0: hdr_byte = "I";
             3'd1: hdr_byte = "Q";
             3'd2: hdr_byte = "L";
-            3'd3: hdr_byte = (m == 2'd1) ? "S" : (m == 2'd2) ? "B" : "C";
-            3'd4: hdr_byte = BYTES[7:0];
-            3'd5: hdr_byte = BYTES[15:8];
-            3'd6: hdr_byte = BYTES[23:16];
-            default: hdr_byte = BYTES[31:24];
+            3'd3: hdr_byte = (m == 2'd1) ? "S" : (m == 2'd2) ? (g_mode ? "G" : "B") : (m == 2'd3) ? "T" : "C";
+            3'd4: hdr_byte = (m == 2'd3) ? 8'd32 : BYTES[7:0];
+            3'd5: hdr_byte = (m == 2'd3) ? 8'd0  : BYTES[15:8];
+            3'd6: hdr_byte = (m == 2'd3) ? 8'd0  : BYTES[23:16];
+            default: hdr_byte = (m == 2'd3) ? 8'd0 : BYTES[31:24];
         endcase
     endfunction
 
@@ -83,8 +91,15 @@ module iq_la #(
         if (rst) begin
             state <= S_IDLE;
         end else case (state)
-            S_IDLE: if (rx_valid && (rx_data == "C" || rx_data == "S" || rx_data == "B")) begin
-                mode     <= (rx_data == "S") ? 2'd1 : (rx_data == "B") ? 2'd2 : 2'd0;
+            S_IDLE: if (rx_valid && rx_data == "T") begin
+                mode  <= 2'd3;
+                st    <= status;
+                st_i  <= 0;
+                idx   <= 0;
+                state <= S_HDR;
+            end else if (rx_valid && (rx_data == "C" || rx_data == "S" || rx_data == "B" || rx_data == "G")) begin
+                mode     <= (rx_data == "S") ? 2'd1 : (rx_data == "B" || rx_data == "G") ? 2'd2 : 2'd0;
+                g_mode   <= (rx_data == "G");
                 waddr    <= {DEPTH_LOG2{1'b1}};   // first write wraps to 0
                 pack_n   <= 0;
                 state    <= S_CAP;
@@ -95,11 +110,11 @@ module iq_la #(
                     wen   <= 1'b1;
                     waddr <= waddr + 1'b1;
                 end else if (mode == 2'd2) begin
-                    if (fm_valid) begin
-                        pack[31:0] <= {{2{fm_vid[13]}}, fm_vid, 8'd0, fm_sym};
+                    if (g_mode ? g_valid : fm_valid) begin
+                        pack[31:0] <= g_mode ? g_word : {{2{fm_vid[13]}}, fm_vid, 8'd0, fm_sym};
                         pack_n     <= pack_n + 3'd1;
                         if (pack_n[0]) begin
-                            wdata <= {{2{fm_vid[13]}}, fm_vid, 8'd0, fm_sym, pack[31:0]};
+                            wdata <= {g_mode ? g_word : {{2{fm_vid[13]}}, fm_vid, 8'd0, fm_sym}, pack[31:0]};
                             wen   <= 1'b1;
                             waddr <= waddr + 1'b1;
                         end
@@ -128,8 +143,14 @@ module iq_la #(
                 if (idx == 3'd7) begin
                     raddr    <= 0;
                     wait_cnt <= 0;
-                    state    <= S_RD;
+                    state    <= (mode == 2'd3) ? S_STAT : S_RD;
                 end
+            end
+            S_STAT: if (can_send) begin
+                tx_data  <= st[st_i * 8 +: 8];
+                tx_valid <= 1'b1;
+                st_i     <= st_i + 5'd1;
+                if (st_i == 5'd31) state <= S_IDLE;
             end
             S_RD: begin   // allow for BSRAM read latency
                 wait_cnt <= wait_cnt + 2'd1;

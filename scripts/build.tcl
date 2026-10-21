@@ -16,6 +16,7 @@ add_file src/iq_resampler.v
 add_file src/fm_demod.v
 add_file src/scope_line.v
 add_file src/video_in.v
+add_file src/chroma.v
 add_file src/line_buffer.v
 add_file src/top.cst
 add_file src/top.sdc

@@ -15,13 +15,14 @@ sys.path.insert(0, __file__.rsplit("\\", 1)[0].rsplit("/", 1)[0])
 import gen_phase_lut  # noqa: E402
 
 LUT = np.array([gen_phase_lut.phase(b) for b in range(256)], np.int32)
+N = 22   # boxcar length, as in src/fm_demod.v
 
 
 def model(sym):
     ph = LUT[sym]
     d = (np.diff(ph, prepend=0) + 512) % 1024 - 512          # wrap to signed 10 bits
     c = np.cumsum(d)
-    vid = c - np.concatenate([np.zeros(16, np.int64), c[:-16]])
+    vid = c - np.concatenate([np.zeros(N, np.int64), c[:-N]])
     return vid
 
 
@@ -38,7 +39,7 @@ def main():
             best = (lag, bad, len(a))
     lag, bad, n = best
     print(f"{len(w)} symbols; best lag {lag}: {bad} of {n} samples differ")
-    print(f"vid range {vid_hw.min()}..{vid_hw.max()} (1 MHz = 204.8)")
+    print(f"vid range {vid_hw.min()}..{vid_hw.max()} (1 MHz = {1024 * N / 80:.1f})")
 
 
 if __name__ == "__main__":
