@@ -162,7 +162,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 C:\Gowin\Gowin_V1.9.11.03_Education_x64\Programmer\bin\programmer_cli.exe --device GW5A-25A --run 2 --fsFile impl\pnr\c5_fpga_hdmi.fs
 ```
 
-`--run 2` は SRAM（電源を切ると消える）、`--run 9` は外部フラッシュへの書き込みです。
+`--run 2` は SRAM（電源を切ると消える）、`--run 54` は外部フラッシュ（GW5A 用、消去・書き込み・照合、約 3 分）です。
 デバッガは FT2232 互換として見えます（A = JTAG、B = UART の COM4）。
 
 ## 計画
