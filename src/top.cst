@@ -1,0 +1,43 @@
+// Tang Primer 25K Dock (GW5A-LV25MG121). Pin locations from the Dock
+// schematic (Tang_Primer_25K_Dock_60033_Schematic.pdf) and Sipeed's
+// TangPrimer-25K-example (commit 27c1737).
+
+IO_LOC "clk" E2;
+IO_PORT "clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE BANK_VCCIO=3.3;
+IO_LOC "led" L6;
+IO_PORT "led" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+
+// Debugger (BL616) UART, COM4 on the PC.
+IO_LOC "uart_tx" C3;
+IO_PORT "uart_tx" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "uart_rx" B3;
+IO_PORT "uart_rx" IO_TYPE=LVCMOS33 PULL_MODE=UP BANK_VCCIO=3.3;
+
+// J4: IQ from the XIAO ESP32-C5. J4 pins 1/2 = +3V3, 3/4 = GND.
+// iq[n] = PARLIO data bit n.            J4 pin   XIAO     C5 GPIO
+IO_LOC "iq[0]" C11;                   // 5        D0       1     Q
+IO_LOC "iq[1]" C10;                   // 6        D1       0     Q
+IO_LOC "iq[2]" B11;                   // 7        D2       25    Q
+IO_LOC "iq[3]" B10;                   // 8        D3       7     Q sign
+IO_LOC "iq[4]" D11;                   // 9        D10      10    I
+IO_LOC "iq[5]" D10;                   // 10       MTDO     5     I
+IO_LOC "iq[6]" G11;                   // 11       MTDI     3     I
+IO_LOC "iq[7]" G10;                   // 12       MTCK     4     I sign
+IO_PORT "iq[0]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_PORT "iq[1]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_PORT "iq[2]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_PORT "iq[3]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_PORT "iq[4]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_PORT "iq[5]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_PORT "iq[6]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_PORT "iq[7]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// J6: PMOD DVI.
+IO_LOC "tmds_d_p[0]" H8,H7;
+IO_PORT "tmds_d_p[0]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "tmds_d_p[1]" G7,G8;
+IO_PORT "tmds_d_p[1]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "tmds_d_p[2]" F5,G5;
+IO_PORT "tmds_d_p[2]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "tmds_clk_p" H5,J5;
+IO_PORT "tmds_clk_p" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
