@@ -11,6 +11,7 @@ add_file src/display.v
 add_file src/tmds_encoder.v
 add_file src/dvi_tx.v
 add_file src/uart.v
+add_file src/c5_link.v
 add_file src/iq_la.v
 add_file src/iq_resampler.v
 add_file src/fm_demod.v

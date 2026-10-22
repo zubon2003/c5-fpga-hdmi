@@ -189,13 +189,16 @@ class Viewer:
             return
         w = struct.unpack("<16H", data[8:])
         sgn = lambda v: v - 0x4000 if v & 0x2000 else v      # 14-bit signed
-        names = ["real_lines", "n", "par1_fields|lvl_n", "out_jumps", "tip_f", "black_f", "thr", "vsync_det/0.8s",
-                 "gain", "h/0.8s", "synth_fields/0.8s", "fields/0.8s", "burst|B|/16", "nco_off", "|R|", "gc/4"]
+        names = ["real_lines", "channel", "par1_fields|lvl_n", "out_jumps", "tip_f", "black_f", "freq_mhz", "vsync_det/0.8s",
+                 "gain", "h/0.8s", "synth_fields/0.8s", "fields/0.8s", "burst|B|/16", "nco_off", "|R|", "link_bytes|last"]
         vals = list(w)
-        for k in (4, 5, 6):
+        vals[1] = (bytes([vals[1] >> 8, vals[1] & 255]).decode("ascii", "replace")
+                   if vals[1] >> 8 else "--")         # receiver link: channel name
+        for k in (4, 5):
             vals[k] = sgn(vals[k])
         vals[13] = vals[13] - 0x10000 if vals[13] & 0x8000 else vals[13]
         vals[2] = f"{vals[2] >> 5}|{vals[2] & 31}"
+        vals[15] = f"{vals[15] >> 8}|{vals[15] & 255:#04x}"
         vals[12] = f"{vals[12] & 0x7fff} colour={'on' if vals[12] & 0x8000 else 'KILLED'}"
         self.log("status " + " ".join(f"{n}={v}" for n, v in zip(names, vals)))
 

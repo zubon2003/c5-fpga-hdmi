@@ -32,6 +32,19 @@ IO_PORT "iq[5]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 IO_PORT "iq[6]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 IO_PORT "iq[7]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 
+// J5: UART link to the XIAO (C5VRX-5 UART build). J5 pin numbers as J4;
+// the J5 pin order is taken from Sipeed's three-port HDMI example.
+IO_LOC "link_tx" L5;                  // J5 pin 5 -> XIAO D5 (GPIO24, C5 RX)
+IO_PORT "link_tx" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "link_rx" K5;                  // J5 pin 6 <- XIAO D4 (GPIO23, C5 TX)
+IO_PORT "link_rx" IO_TYPE=LVCMOS33 PULL_MODE=UP BANK_VCCIO=3.3;
+// Dock keys (H11, H10 as KEY[0..1] in public Dock constraints, pull-down,
+// pressed = high); c5_link learns the resting level anyway.
+IO_LOC "btn[0]" H11;                  // next band
+IO_PORT "btn[0]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_LOC "btn[1]" H10;                  // next channel
+IO_PORT "btn[1]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
 // J6: PMOD DVI.
 IO_LOC "tmds_d_p[0]" H8,H7;
 IO_PORT "tmds_d_p[0]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;

@@ -45,6 +45,7 @@ gain control, AFC and channel selection.
 | HDMI monitor or capture device | 720p input |
 | 9 jumper wires (8 signals + GND), short | XIAO → Dock PMOD **J4** |
 | Analog 5.8 GHz VTX (NTSC) | tested on F3 (5780 MHz) |
+| Optional: 2 more jumper wires | XIAO D4/D5 → Dock PMOD **J5**, for the Dock buttons (band / channel) and the on-screen channel; needs the modified C5 firmware below |
 
 ### C5VRX version
 
@@ -55,6 +56,15 @@ The IQ GPIO mapping below is the one in that version (also identical in
 v5.0.322). Later versions may change it; check `s_iq_pins` and
 `s_lane_diag` in C5VRX's `main/rf.c`. Set the channel on the C5 as usual
 (BOOT button menu or USB console) and let its startup calibration finish.
+
+### Optional: band / channel buttons on the Dock
+
+To step the band and channel with the Dock's buttons and see the channel
+on screen, the C5 needs a modified C5VRX-5 v5.0.387 with a UART on its
+two DAC LSB pins: [firmware/](firmware/README.md) has the patch and the
+build steps. It is not an official C5VRX release; the C5's own analog
+video output and its sync flywheel are off in it. Everything else here
+works with the official firmware.
 
 ## Wiring (XIAO ESP32-C5 → Tang Primer 25K Dock J4)
 
@@ -95,7 +105,17 @@ column odd pins). Find pin 1 with a meter (+3.3 V) before wiring.
   over their own USB. A common ground is required.
 - Keep the wires short (under ~10 cm): the IQ bits change at 80 MHz.
 - The three I bits on the XIAO's back-side JTAG pads need soldering.
-- The PMOD DVI goes on **J6**. J5 is free.
+- The PMOD DVI goes on **J6**.
+
+Optional receiver link (modified C5 firmware only), Dock PMOD **J5**
+(same pin numbering as J4):
+
+| J5 pin | FPGA ball | Signal | XIAO pin | ESP32-C5 GPIO |
+|---|---|---|---|---|
+| 5 | L5 | FPGA TX → C5 RX | D5 | 24 |
+| 6 | K5 | C5 TX → FPGA RX | D4 | 23 |
+
+Remove the DAC resistors from D4/D5 if the XIAO had the resistor DAC.
 
 ## Programming
 
@@ -132,6 +152,10 @@ With a VTX on, the picture appears within a second; without one the output
 free-runs at ~59.9 Hz. The small square at the top right of the picture is
 green while horizontal sync is found, red otherwise.
 
+With the receiver link: the Dock key on H11 steps the band, the key on
+H10 the channel (R, A, B, E, F, L; 1..8). The new channel name (e.g. `F3`)
+appears at the top right for 3 seconds, and once at power-up.
+
 The Dock's USB debugger has a UART (the second COM port, 1 Mbaud). Single
 characters change settings at run time (they reset at power-off):
 
@@ -145,7 +169,8 @@ characters change settings at run time (they reset at power-off):
 | `v` | V sign (hue) |
 | `a` / `z` | colour saturation +/− 0.25× |
 | `[` / `]` | hue −/+ 11.25° |
-| `T` | status packet (sync, levels, colour lock) |
+| `m` | FM demodulator mode: 0 adjacent, 1 PLL fast (power-up), 2 PLL, 3 PLL slow |
+| `T` | status packet (sync, levels, colour lock, receiver channel) |
 | `C` `S` `B` `G` | logic-analyser captures (raw IQ, symbols, FM output, chroma) |
 
 `scripts/viewer.py` shows the HDMI output through a UVC capture device,
@@ -162,7 +187,7 @@ the host tools and bit-level models used to verify each stage on the board.
 ## How it works
 
 ```
-XIAO ESP32-C5 (C5VRX-5, unmodified): RF, ADC, gain, AFC
+XIAO ESP32-C5 (C5VRX-5; official, or patched for the link): RF, ADC, gain, AFC
   │ MODEM_DIAG Q4/I4 on 8 GPIOs, ~80 MHz, no clock
   ▼
 Tang Primer 25K
@@ -170,7 +195,7 @@ Tang Primer 25K
   iq_resampler       phase-tracking resampler (byte-wide Alexander detector)
                      → one IQ byte per symbol, ~80 MS/s (C5/Dock crystal
                      offset ~30 ppm tracked)
-  fm_demod           phase LUT, adjacent difference, 22-tap boxcar
+  fm_demod           amplitude-gated PLL (or adjacent difference), 22-tap boxcar
   video_in           sync separator (hysteresis, pulse widths, flywheel),
                      field / parity, black and white levels from porch and
                      sync depth, 640 pixels per line into a 32-line ring
@@ -223,6 +248,9 @@ tracker and kp ladder, `main/u85q.bsasm`, `main/kp_ladder.h` and
 second-order loop, an amplitude-gated correction and seamless mode
 switching, with the signal and channel model of the C5VRX-5 range
 simulator `research/sim.py` followed in `research/demod_sim.py`) from
+[C5VRX], and `firmware/c5vrx5-v5.0.387-fpga-link.patch` modifies C5VRX-5
+v5.0.387 (commit `2f1a1252`; `main/console.c`, `main/transport.c`,
+`main/CMakeLists.txt`) for the optional receiver link, from
 [C5VRX](https://github.com/Twotoz/C5VRX) by Twotoz and the C5VRX
 contributors. Visit the [official C5VRX website](https://twotoz.github.io/C5VRX/)
 for the original project and its Discord invite. See the source and

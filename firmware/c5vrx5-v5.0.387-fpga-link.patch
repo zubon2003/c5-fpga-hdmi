@@ -1,0 +1,171 @@
+From b478a32b02d386d05508a168980952cf2e3a8c07 Mon Sep 17 00:00:00 2001
+From: zubon2003 <zubon2003@gmail.com>
+Date: Fri, 23 Oct 2026 00:44:11 +0900
+Subject: [PATCH] c5-fpga-hdmi UART link build (not an official C5VRX release)
+
+Modification of C5VRX-5 v5.0.387 (2f1a1252) for the c5-fpga-hdmi FPGA
+receiver, which takes the MODEM_DIAG IQ and does not use the analog
+output:
+
+- UART1 at 115200 8N1 on XIAO D4 = GPIO23 (TX) and D5 = GPIO24 (RX), the
+  two DAC LSB pins, which are no longer driven. Only the keys b (next
+  band), c (next channel), s (scan) and ? (report now) are taken from it;
+  it answers "CH <name> <MHz>" + CR LF on every channel change and once a
+  second.
+- The sync flywheel stays off whatever is saved: it drives the output
+  enables and pin muxes of all six DAC pins.
+
+C5VRX by Twotoz and the C5VRX contributors, GPL-3.0-only.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ main/CMakeLists.txt |  2 +-
+ main/console.c      | 63 +++++++++++++++++++++++++++++++++++++++++++++
+ main/transport.c    | 17 +++++++++---
+ 3 files changed, 77 insertions(+), 5 deletions(-)
+
+diff --git a/main/CMakeLists.txt b/main/CMakeLists.txt
+index 0f16895d..e7d3683d 100644
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -8,7 +8,7 @@ idf_component_register(
+         "sync_output_probe.c" "sync_edge_clock.c" "sync_live_gate.c" "sync_live_output.c"
+     INCLUDE_DIRS "."
+     REQUIRES esp_wifi esp_phy nvs_flash esp_event esp_netif esp_driver_parlio
+-             esp_driver_gpio esp_driver_bitscrambler esp_driver_usb_serial_jtag
++             esp_driver_gpio esp_driver_bitscrambler esp_driver_usb_serial_jtag esp_driver_uart
+              esp_driver_tsens esp_driver_gptimer esp_driver_rmt esp_timer esp_mm hal heap esp_hw_support esp_app_format esp_partition)
+ 
+ target_bitscrambler_add_src("u85q.bsasm")
+diff --git a/main/console.c b/main/console.c
+index 7ed68d38..1a895747 100644
+--- a/main/console.c
++++ b/main/console.c
+@@ -8,6 +8,7 @@
+ #include "esp_timer.h"
+ #include "freertos/queue.h"
+ #include "hal/usb_serial_jtag_ll.h"
++#include "driver/uart.h"
+ #include "rf.h"
+ #include "snapshot.h"
+ 
+@@ -133,6 +134,67 @@ static void usb_reader_task(void *arg)
+     }
+ }
+ 
++/* c5-fpga-hdmi UART link (modification, not an official C5VRX release):
++ * UART1 at 115200 8N1 on XIAO D4 = GPIO23 (TX to the FPGA) and D5 =
++ * GPIO24 (RX from the FPGA), the pins the two DAC LSBs used (transport.c).
++ * The FPGA's buttons send console keys; only b (next band), c (next
++ * channel), s (scan) and ? (report now) are taken, so nothing on this
++ * wire can reboot, calibrate or change saved settings. The receiver
++ * answers "CH <name> <MHz>\r\n" when the channel changes, on ? and once a
++ * second (for the FPGA's on-screen display). */
++#define LINK_UART UART_NUM_1
++#define LINK_TX   23
++#define LINK_RX   24
++
++static void link_report(void)
++{
++    const fpv_channel_t *ch = rf_channel();
++    char line[32];
++    int n = snprintf(line, sizeof(line), "CH %s %u\r\n", ch ? ch->name : "--", (unsigned)rf_frequency_mhz());
++    if (n > 0) uart_write_bytes(LINK_UART, line, (size_t)n);
++}
++
++static void link_task(void *arg)
++{
++    (void)arg;
++    size_t last_index = (size_t)-1;
++    int64_t last_report = 0;
++    for (;;) {
++        uint8_t buf[16];
++        int got = uart_read_bytes(LINK_UART, buf, sizeof(buf), pdMS_TO_TICKS(50));
++        bool now = false;
++        for (int k = 0; k < got; ++k) {
++            uint8_t c = buf[k];
++            if (c == 'b' || c == 'c' || c == 's') (void)xQueueSend(s_keys, &c, 0);
++            else if (c == '?') now = true;
++        }
++        size_t index = rf_channel_index();
++        int64_t t = esp_timer_get_time();
++        if (now || index != last_index || t - last_report >= 1000000) {
++            last_index = index;
++            last_report = t;
++            link_report();
++        }
++    }
++}
++
++static void link_start(void)
++{
++    const uart_config_t cfg = {
++        .baud_rate = 115200,
++        .data_bits = UART_DATA_8_BITS,
++        .parity = UART_PARITY_DISABLE,
++        .stop_bits = UART_STOP_BITS_1,
++        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
++        .source_clk = UART_SCLK_DEFAULT,
++    };
++    esp_err_t err = uart_driver_install(LINK_UART, 256, 256, 0, NULL, 0);
++    if (err == ESP_OK) err = uart_param_config(LINK_UART, &cfg);
++    if (err == ESP_OK) err = uart_set_pin(LINK_UART, LINK_TX, LINK_RX, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
++    if (err == ESP_OK && xTaskCreate(link_task, "fpga_link", 3072, NULL, 2, NULL) != pdPASS) err = ESP_ERR_NO_MEM;
++    printf("FPGA_LINK uart=1 tx=%d rx=%d baud=115200 %s\n", LINK_TX, LINK_RX, err == ESP_OK ? "ok" : esp_err_to_name(err));
++}
++
+ static void console_task(void *arg)
+ {
+     (void)arg;
+@@ -175,5 +237,6 @@ void console_start(void)
+     ESP_ERROR_CHECK(xTaskCreate(console_task, "console", 6144, NULL, 2, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
+     ESP_ERROR_CHECK(xTaskCreate(usb_reader_task, "usb_reader", 3072, NULL, 10, NULL) == pdPASS ? ESP_OK :
+                     ESP_ERR_NO_MEM);
++    link_start();   /* never fatal: the receiver runs without the FPGA link */
+ }
+ 
+diff --git a/main/transport.c b/main/transport.c
+index 3b6cd8b8..34c8d5af 100644
+--- a/main/transport.c
++++ b/main/transport.c
+@@ -65,8 +65,12 @@ static const void *tracker_format_program(bool lp,bool flag)
+ { return flag && lp?s_u85q_lp_flag:tracker_program(lp); }
+ 
+ /* 6-bit resistor DAC, LSB first (XIAO D4..D9; 8.2k/3.9k/2k/1k/470R/240R
+- * plus 200R). Do not change the tested pin order. */
+-static const int s_dac_gpio[8] = {23, 24, 11, 12, 8, 9, -1, -1};
++ * plus 200R). Do not change the tested pin order.
++ * c5-fpga-hdmi UART build (modification, not an official C5VRX release):
++ * D4 (GPIO23) and D5 (GPIO24) carry the UART link to the FPGA instead
++ * (console.c), so the two DAC LSBs are not driven; the FPGA takes the IQ
++ * from MODEM_DIAG and does not use this analog output. */
++static const int s_dac_gpio[8] = {-1, -1, 11, 12, 8, 9, -1, -1};
+ 
+ DMA_ATTR __attribute__((aligned(64))) uint8_t s_raw_ring[RAW_RING_BYTES];
+ static parlio_rx_unit_handle_t s_rx;
+@@ -1036,8 +1040,12 @@ bool transport_sync_live_release(void)
+  * (operator, 2026-10-18, after the PR #218 witness fix held on the board).
+  * A saved OFF is respected and never allocates the observer/output, so
+  * its heap stays free for the menu. */
+-static bool s_flywheel_boot=true;
+-void transport_sync_flywheel_set_boot(bool on) { s_flywheel_boot=on; }
++/* c5-fpga-hdmi UART build: the flywheel drives the output enables and pin
++ * muxes of all six DAC pins (sync_live_output.c), two of which carry the
++ * UART here. It stays off whatever is saved; an OFF flywheel never
++ * allocates the observer or the output. */
++static bool s_flywheel_boot=false;
++void transport_sync_flywheel_set_boot(bool on) { (void)on; s_flywheel_boot=false; }
+ bool transport_sync_flywheel_enabled(void)
+ {
+     return s_live_owner ? s_live_owner->output_requested : s_flywheel_boot;
+@@ -1045,6 +1053,7 @@ bool transport_sync_flywheel_enabled(void)
+ 
+ void transport_sync_flywheel_set(bool on, bool save)
+ {
++    if(on){printf("SYNC_FLYWHEEL refused=uart_build (D4/D5 carry the FPGA link)\n");return;}
+     if(on && !s_live_owner)s_live_owner=calloc(1,sizeof(*s_live_owner));
+     if(on && !s_live_owner){printf("SYNC_FLYWHEEL refused=memory\n");return;}
+     s_flywheel_boot=on;
+-- 
+2.45.2.windows.1
+

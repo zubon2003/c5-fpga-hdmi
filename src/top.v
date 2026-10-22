@@ -15,6 +15,9 @@ module top (
     input  wire [7:0] iq,           // PARLIO data-bit order: Q bits 0..3, I bits 4..7
     input  wire       uart_rx,
     output wire       uart_tx,
+    input  wire [1:0] btn,          // Dock keys: [0] H11 band, [1] H10 channel (c5_link.v)
+    input  wire       link_rx,      // J5 pin 6 <- XIAO D4 (C5 GPIO23, UART build)
+    output wire       link_tx,      // J5 pin 5 -> XIAO D5 (C5 GPIO24)
 
     output wire       tmds_clk_p, tmds_clk_n,
     output wire [2:0] tmds_d_p,   tmds_d_n
@@ -76,6 +79,16 @@ module top (
     );
 
     wire [255:0] vin_status;   // from video_in below
+    // Receiver link (button, channel reports); its channel replaces status
+    // word 1 (n) and its MHz word 6 (thr) for the UART 'T' packet.
+    wire [15:0]  ch_name, ch_mhz;
+    wire [7:0]   ch_reports, link_edges, link_bytes;
+    c5_link u_link (.clk(clk_iq), .rst(rst_iq), .btn(btn), .rxd(link_rx), .txd(link_tx),
+                    .ch_name(ch_name), .ch_mhz(ch_mhz), .reports(ch_reports),
+                    .rx_edges(link_edges), .rx_bytes(link_bytes));
+    // word 15 (gc/4) carries the link's RX bytes | edges while the link is new
+    wire [255:0] la_status = {link_bytes, link_edges, vin_status[239:112], ch_mhz, vin_status[95:32],
+                              ch_name, vin_status[15:0]};
     wire [15:0]  out_jumps;    // from video_timing below
     wire         cdbg_v;
     wire [31:0]  cdbg_w;
@@ -90,7 +103,7 @@ module top (
 
     iq_la u_la (
         .clk(clk_iq), .rst(rst_iq), .win(win), .sym_valid(sym_valid), .sym(sym),
-        .fm_valid(fm_valid), .fm_vid(fm_vid), .fm_sym(fm_sym), .status(vin_status),
+        .fm_valid(fm_valid), .fm_vid(fm_vid), .fm_sym(fm_sym), .status(la_status),
         .g_valid(cdbg_v), .g_word(cdbg_w),
         .rx_valid(rx_valid), .rx_data(rx_data),
         .tx_valid(tx_valid), .tx_data(tx_data), .tx_ready(tx_ready),
@@ -199,6 +212,7 @@ module top (
         .line_start(line_start), .activity(activity), .early_cnt(early_cnt),
         .late_cnt(late_cnt), .sc_rd(sc_rd), .sc_trig(sc_trig),
         .pic_mode(mode_s[1]), .parity(parity_s[1]), .color_on(color_s[1]), .v_inv(vinv_s[1]), .sat(sat_s2), .hue(hue_s2),
+        .osd_name(ch_name),
         .pic_addr(pic_addr), .pic(pic),
         .rgb(rgb), .de_o(de_d), .hsync_o(hsync_d), .vsync_o(vsync_d)
     );

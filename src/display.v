@@ -20,6 +20,13 @@
 // Weights are sixths of a line, rounded to sixteenths.
 // C = U on even and V on odd stored pixels.
 // RGB = Y + (1.125 V), Y - 0.39 U - 0.58 V, Y + 2 U (shift-add BT.601).
+//
+// Channel OSD: when the receiver link (c5_link.v) reports a new channel
+// name, it is shown for 180 frames (3 s) at the top right, left of the
+// lock marker: two 8x8 glyphs scaled 8x (64 px each, x 1112..1239,
+// y 6..69) on a black box (x 1104..1243, y 0..75). The name comes from the
+// IQ domain; it counts only after two frames with the same value, so a
+// half-updated pair is never shown. "--" (no link yet) is not shown.
 module display (
     input  wire               clk,
     input  wire [10:0]        x,
@@ -39,6 +46,7 @@ module display (
     input  wire               v_inv,
     input  wire [3:0]         sat,          // colour gain in quarters (4 = 1x)
     input  wire [4:0]         hue,          // colour rotation, 11.25 degree steps
+    input  wire [15:0]        osd_name,     // receiver channel, two ASCII characters (IQ domain)
     output reg  [14:0]        pic_addr,
     input  wire [15:0]        pic,
     output reg  [23:0]        rgb,
@@ -112,10 +120,51 @@ module display (
     wire [4:0]  slot = x[0] ? line_b[4:0] : line_a[4:0];
     always @(*) pic_addr = {slot, 9'd0} + {2'd0, slot, 7'd0} + {5'd0, px_rd};   // slot * 640 + px
 
+    // ---- channel OSD: change detection, once per frame ----
+    reg [15:0] on_s1, on_s2, on_prev, on_shown;
+    reg [7:0]  osd_t;                        // frames left to show
+    reg        vs_d;
+    always @(posedge clk) begin
+        on_s1 <= osd_name;
+        on_s2 <= on_s1;
+        vs_d  <= vsync;
+        if (vsync && !vs_d) begin
+            on_prev <= on_s2;
+            if (on_s2 == on_prev && on_s2 != on_shown) begin
+                on_shown <= on_s2;
+                osd_t    <= (on_s2 == "--") ? 8'd0 : 8'd180;
+            end else if (osd_t != 0) begin
+                osd_t <= osd_t - 8'd1;
+            end
+        end
+    end
+    function [7:0] font(input [7:0] c, input [2:0] row);   // 8x8, MSB = left
+        reg [63:0] g;
+        begin
+            case (c)
+                "0": g = 64'h3C666E7666663C00;  "1": g = 64'h1838181818187E00;
+                "2": g = 64'h3C66060C30607E00;  "3": g = 64'h3C66061C06663C00;
+                "4": g = 64'h0C1C3C6C7E0C0C00;  "5": g = 64'h7E607C0606663C00;
+                "6": g = 64'h1C30607C66663C00;  "7": g = 64'h7E060C1830303000;
+                "8": g = 64'h3C66663C66663C00;  "9": g = 64'h3C66663E060C3800;
+                "A": g = 64'h183C66667E666600;  "B": g = 64'h7C66667C66667C00;
+                "E": g = 64'h7E60607C60607E00;  "F": g = 64'h7E60607C60606000;
+                "L": g = 64'h6060606060607E00;  "R": g = 64'h7C66667C6C666600;
+                "-": g = 64'h0000007E00000000;
+                default: g = 64'h0;
+            endcase
+            font = g[63 - 8 * row -: 8];
+        end
+    endfunction
+    wire [10:0] ox = x - 11'd1112;           // glyph area, 2 x 64 px
+    wire [9:0]  oy = y - 10'd6;
+    wire        in_glyphs = (x >= 1112) && (x < 1240) && (y >= 6) && (y < 70);
+    wire [7:0]  glyph_row = font(ox[6] ? on_shown[7:0] : on_shown[15:8], oy[5:3]);
+
     // ---- stage 1 ----
     reg [10:0] x1;
     reg [9:0]  y1;
-    reg        de1, hs1, vs1, sc1, grid1, led1, bar1, mark1;
+    reg        de1, hs1, vs1, sc1, grid1, led1, bar1, mark1, obox1, obit1;
     reg [3:0]  r1;
     always @(posedge clk) begin
         x1    <= x;
@@ -130,6 +179,8 @@ module display (
         led1  <= (x >= 1248) && (x < 1268) && (y >= 8) && (y < 28);
         bar1  <= in_bars && (x >= 12) && (x < 12 + len);
         mark1 <= in_bars && (x < 10);
+        obox1 <= (osd_t != 0) && (x >= 1104) && (x < 1244) && (y < 76);
+        obit1 <= (osd_t != 0) && in_glyphs && glyph_row[3'd7 - ox[5:3]];
     end
 
     // ---- stage 2: trace position ----
@@ -264,9 +315,11 @@ module display (
     function [7:0] clamp8(input signed [10:0] v);
         clamp8 = (v < 0) ? 8'd0 : (v > 11'sd255) ? 8'd255 : v[7:0];
     endfunction
-    reg        pm2;
+    reg        pm2, obox2, obit2;
     always @(posedge clk) begin
         pm2   <= pic_mode;
+        obox2 <= obox1;
+        obit2 <= obit1;
         ty2   <= (t_s < 0) ? 10'd0 : (t_s > 16'sd479) ? 10'd479 : t_s[9:0];
         typ   <= ty2;
         y2    <= y1;
@@ -290,6 +343,8 @@ module display (
         hsync_o <= hs2;
         vsync_o <= vs2;
         if (led2)                 rgb <= sc_trig ? 24'h20d040 : 24'hd03020;
+        else if (obit2)           rgb <= 24'hffffff;
+        else if (obox2)           rgb <= 24'h000000;
         else if (pm2)             rgb <= {clamp8(rr), clamp8(gg), clamp8(bb)};
         else if (sc2 && trace)    rgb <= 24'hf0f070;
         else if (sc2 && grid2)    rgb <= 24'h303840;
