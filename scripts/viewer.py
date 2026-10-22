@@ -9,6 +9,7 @@ Window keys (sent to the FPGA as they are):
     f field offset direction           c colour on/off      v V sign
     a / z colour saturation +/- 0.25x  [ / ] hue -/+ 11.25 degrees
     s save a snapshot now (captures/snap_<time>.png)         q quit
+    r start / stop recording a video (captures/rec_<time>.mp4)
 
 The viewer keeps the UART open, so other tools go through it. It saves
 captures/live.png once a second and executes lines appended to
@@ -16,11 +17,14 @@ captures/viewer_cmd.txt, logging to captures/viewer_log.txt:
     key <chars>            send characters to the FPGA
     cap <C|S|B> <path>     logic-analyser capture (as scripts/iqla.py)
     snap <path>            save the current frame
+    rec start [path]       record the picture to an H.264 mp4 (30 fps)
+    rec stop               finish the recording
     defaults               forget the tracked settings (after reprogramming)
     status                 sync separator status (FPGA 'T'), logged
 """
 import argparse
 import os
+import queue
 import struct
 import subprocess
 import sys
@@ -65,6 +69,11 @@ class Viewer:
         self.running = True
         self.status = "starting"
         self.settings = dict(DEFAULTS)
+        self.rec = None                # encoder process while recording
+        self.rec_q = None
+        self.rec_path = ""
+        self.rec_frames = 0
+        self.rec_dropped = 0
         self.ser = serial.Serial(port, 1_000_000, timeout=3)
         if hasattr(self.ser, "set_buffer_size"):
             self.ser.set_buffer_size(rx_size=1 << 20)
@@ -106,6 +115,12 @@ class Viewer:
             with self.lock:
                 self.frame = buf
                 self.frames += 1
+                q = self.rec_q
+            if q is not None:
+                try:
+                    q.put_nowait(buf)
+                except queue.Full:        # encoder behind: drop, never stall the capture
+                    self.rec_dropped += 1
 
     def send(self, chars):
         with self.ser_lock:
@@ -168,10 +183,10 @@ class Viewer:
             return
         w = struct.unpack("<16H", data[8:])
         sgn = lambda v: v - 0x4000 if v & 0x2000 else v      # 14-bit signed
-        names = ["real_lines", "n", "par1_fields|lvl_n", "black", "tip_f", "black_f", "thr", "s_avg",
-                 "gain", "h/0.8s", "broad/0.8s", "fields/0.8s", "burst|B|/16", "nco_off", "|R|", "gc/4"]
+        names = ["real_lines", "n", "par1_fields|lvl_n", "out_jumps", "tip_f", "black_f", "thr", "vsync_det/0.8s",
+                 "gain", "h/0.8s", "synth_fields/0.8s", "fields/0.8s", "burst|B|/16", "nco_off", "|R|", "gc/4"]
         vals = list(w)
-        for k in (3, 4, 5, 6, 7):
+        for k in (4, 5, 6):
             vals[k] = sgn(vals[k])
         vals[13] = vals[13] - 0x10000 if vals[13] & 0x8000 else vals[13]
         vals[2] = f"{vals[2] >> 5}|{vals[2] & 31}"
@@ -184,6 +199,56 @@ class Viewer:
             write_png(path, frame)
             return True
         return False
+
+    def rec_start(self, path=None):
+        if self.rec is not None:
+            self.log(f"rec: already recording {self.rec_path}")
+            return
+        path = path or os.path.join(CAP_DIR, time.strftime("rec_%Y%m%d_%H%M%S.mp4"))
+        proc = subprocess.Popen(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", "30", "-i", "-",
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+             "-movflags", "+faststart", path],
+            stdin=subprocess.PIPE)
+        q = queue.Queue(maxsize=30)
+        self.rec, self.rec_path, self.rec_frames, self.rec_dropped = proc, path, 0, 0
+
+        def writer():
+            while True:
+                buf = q.get()
+                if buf is None:
+                    break
+                try:
+                    proc.stdin.write(buf)
+                    self.rec_frames += 1
+                except OSError:
+                    self.log("rec: encoder stopped")
+                    break
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+            proc.wait()
+            self.log(f"rec: saved {path} ({self.rec_frames} frames, {self.rec_frames / 30:.1f} s, "
+                     f"{self.rec_dropped} dropped)")
+
+        self.rec_thread = threading.Thread(target=writer, daemon=True)
+        self.rec_thread.start()
+        with self.lock:
+            self.rec_q = q
+        self.log(f"rec: recording {path}")
+
+    def rec_stop(self, wait=False):
+        if self.rec is None:
+            self.log("rec: not recording")
+            return
+        with self.lock:
+            q, self.rec_q = self.rec_q, None
+        q.put(None)
+        if wait:
+            self.rec_thread.join(timeout=30)
+        self.rec = None
 
     def housekeeping(self):
         last_snap = 0
@@ -221,6 +286,11 @@ class Viewer:
             elif parts[0] == "defaults":
                 self.settings = dict(DEFAULTS)
                 self.log(f"settings reset -> {self.describe()}")
+            elif parts[0] == "rec":
+                if parts[1] == "start":
+                    self.rec_start(os.path.join(ROOT, parts[2]) if len(parts) > 2 else None)
+                else:
+                    self.rec_stop()
             elif parts[0] == "snap":
                 ok = self.snapshot(os.path.join(ROOT, parts[1]))
                 self.log(f"snap {parts[1]}: {'ok' if ok else 'no frame yet'}")
@@ -233,6 +303,11 @@ class Viewer:
         ch = ev.char
         if ch == "q":
             self.quit()
+        elif ch == "r":
+            if self.rec is None:
+                self.rec_start()
+            else:
+                self.rec_stop()
         elif ch == "s":
             path = os.path.join(CAP_DIR, time.strftime("snap_%H%M%S.png"))
             self.snapshot(path)
@@ -247,12 +322,15 @@ class Viewer:
             ppm = f"P6 {W} {H} 255\n".encode() + frame
             self.photo = tk.PhotoImage(data=ppm, format="PPM")
             self.label.configure(image=self.photo)
-        self.bar.configure(text=f" {self.describe()}   frames {frames}   {self.status if frame is None else ''}"
-                                f"   keys: P W u d h l f c v a z [ ]  s=snapshot q=quit")
+        rec = f"   REC {self.rec_frames / 30:.0f} s" if self.rec is not None else ""
+        self.bar.configure(text=f" {self.describe()}   frames {frames}   {self.status if frame is None else ''}{rec}"
+                                f"   keys: P W u d h l f c v a z [ ]  s=snapshot r=record q=quit")
         if self.running:
             self.root.after(33, self.redraw)
 
     def quit(self):
+        if self.rec is not None:
+            self.rec_stop(wait=True)
         self.running = False
         try:
             self.ff.kill()

@@ -31,7 +31,8 @@ C5VRX-5 のファームウェアは、受信機の生の 4 ビット IQ サン�
   C5VRX の MODEM_DIAG IQ の GPIO 出力（レーンの割り当てとピン順、C5VRX-5 の
   `main/rf.c`）を使い、「C5 を RF フロントエンドにして、信号処理は外部の
   ロジックで行う」という研究（C5VRX-4 の `RESEARCH.md`）に沿っています。
-  [クレジット](#クレジット) を参照してください。
+  同期分離には C5VRX-4 の sync flywheel（`SYNC_FLYWHEEL.md`）のライン格子の
+  考え方を使っています。[クレジット](#クレジット) を参照してください。
 
 ## 必要なハードウェア
 
@@ -213,7 +214,11 @@ GPL-3.0-only — [LICENSE](LICENSE) を参照してください。
 [C5VRX](https://github.com/Twotoz/C5VRX) から、ESP32-C5 の MODEM_DIAG IQ の
 GPIO 出力（Q4/I4 のレーンの割り当てとピン順、C5VRX-5 の `main/rf.c`）と、
 「C5 を RF フロントエンドにして、信号処理は外部のロジックで行う」という
-構成の研究（C5VRX-4 の `legacy/c5vrx4/RESEARCH.md`）を取り入れています。
+構成の研究（C5VRX-4 の `legacy/c5vrx4/RESEARCH.md`）と、予測位置の近くの
+同期パルスだけを受け付ける PLL ライン格子の考え方（C5VRX-4 の sync flywheel、
+`legacy/c5vrx4/SYNC_FLYWHEEL.md`。ここでは `src/video_in.v` のライン PLL として
+新しく実装し、ラインのタイミングだけに使っています。同期パルスの再生はしません）を
+取り入れています。
 元のプロジェクトと Discord への招待は
 [C5VRX 公式サイト](https://twotoz.github.io/C5VRX/) にあります。適用される
 条件は、ソースとライセンスの表示を参照してください（C5VRX は

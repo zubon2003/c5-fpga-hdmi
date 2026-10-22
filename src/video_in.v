@@ -10,12 +10,12 @@
 // false line starts and white bands on OSD lines). Pulses below the
 // threshold are classed by width: H 3..8 us, equalising 1..3 us, broad
 // (vertical) > 15 us.
-// Line starts: a H pulse at least 0.8 line after the last line start is
-// one; without it, a line start is synthesised one line period (L = 5085)
-// after the last, so lines keep counting through the vertical interval and
-// over lost pulses.
-// Field: the first broad pulse starts a field (line count n = 0). Its
-// distance from the last line start tells the field parity (half a line).
+// Line starts: a line PLL predicts each line start one period after the
+// last; H pulses near the prediction are real lines, otherwise the line is
+// synthesised (see "line PLL" below).
+// Field: the first broad pulse 250+ lines after the last field start starts
+// a field (line count n = 0); its distance from the last line start tells
+// the field parity (half a line). Without one, a field is synthesised.
 // Lines n = first .. first + 239 are the 240 active lines of the field
 // (first and the picture start act are runtime settings from the UART).
 //
@@ -50,12 +50,11 @@ module video_in (
     output reg  [15:0]        real_lines,   // real H line starts per field, for display
     output reg  [15:0]        field_lines,  // all line starts per field
     output wire [255:0]       status,       // for the UART 'T' command
+    input  wire [15:0]        jumps,        // output frame re-acquisitions (pixel domain, display only)
     output wire               cdbg_v,       // chroma debug stream (UART 'G')
     output wire [31:0]        cdbg_w
 );
     localparam [23:0] L        = 24'd5085;
-    localparam [23:0] L_MIN    = 24'd4068;   // 0.8 L
-    localparam [23:0] L_SYNTH  = 24'd5594;   // 1.1 L
     // Back porch windows are timed from the sync trailing edge (rel_r): the
     // line start is only known once the pulse has ended (+ 0.3 us debounce),
     // which with the 5.4..6.2 us pulse width at the slicing level was later
@@ -92,6 +91,7 @@ module video_in (
     reg [23:0] width;
     reg [23:0] t_rise;
     reg        pulse_end;          // one clock after a pulse ended
+    reg        fall_ev;            // one clock after a pulse started
     reg [8:0]  tip_n;
     reg signed [21:0] tip_sum;
     reg signed [13:0] tip;
@@ -104,6 +104,7 @@ module video_in (
     wire cross = below ? (vid >= thr) : (vid < thr);
     always @(posedge clk) begin
         pulse_end <= 1'b0;
+        fall_ev   <= 1'b0;
         if (rst) begin
             below <= 1'b0;
             other <= 0;
@@ -113,6 +114,7 @@ module video_in (
                 other <= 0;
                 if (!below) begin
                     below   <= 1'b1;
+                    fall_ev <= 1'b1;
                     t_fall  <= t - DB + 24'd1;
                     tip_n   <= 0;
                     tip_sum <= 0;
@@ -132,42 +134,198 @@ module video_in (
     wire is_h     = pulse_end && width >= 24'd240 && width < 24'd640;
     wire is_broad = pulse_end && width >= 24'd1200;
 
-    // ---- line starts and field ----
-    reg [23:0] last_line;
+    // ---- line starts: line PLL ----
+    // The next line start is predicted one line period after the last one.
+    // A sync pulse whose falling edge is within +-W of the prediction starts
+    // the line at once (its own edge, so the picture does not jitter); when
+    // the pulse ends as a H pulse the line counts as real (only real lines
+    // measure the porch and burst). Without an edge by the end of the window
+    // the line is synthesised at the prediction, which also counts lines
+    // through the vertical interval. Eight H pulses in a row one line apart
+    // outside the window move the PLL to them; 300 lines without a real H
+    // unlock it and the next H is taken as it is.
+    // The first version accepted any H 0.8 line after the last line start
+    // and synthesised 1.1 line after it. One noise pulse mid-line then put
+    // its phase half a line off, every real H after it looked early, and it
+    // never came back while the picture itself was still fine (field test:
+    // 1..4 real lines per field at 24 dB video SNR). A H pulse is only known
+    // when it ends (~6 us), so the line starts at the falling edge here; a
+    // version that waited for the pulse end synthesised every line first.
+    // The idea of a PLL line grid that only takes pulses near its prediction
+    // follows the C5VRX-4 sync flywheel (legacy/c5vrx4/SYNC_FLYWHEEL.md,
+    // C5VRX by Twotoz and the C5VRX contributors).
+    // While locked a line starts at the prediction, not at its own edge:
+    // starting at the edge moved every line by the edge noise (4 x 64-us
+    // captures at close range: 1.4 samples rms, 5 p-p, several times more
+    // on a weaker signal), seen as horizontal wobble. The prediction is a
+    // second-order loop in 1/256 sample: each real H compares its pulse
+    // centre (half the noise of one edge) less the average half width with
+    // the line start, and moves the next start by e/16 and the period by
+    // e/1024 (host simulation: line-to-line jitter 0.26 sample at 4 samples
+    // rms edge noise, 0.06 at 1; period offsets of 0.3 sample/line settle
+    // in ~100 lines). Lines whose pulse is not a H (noise, vertical
+    // interval) leave the loop alone.
+    localparam [23:0] W     = 24'd200;       // 2.5 us
+    localparam [23:0] W_SYN = 24'd240;       // no edge by then: synthesise
+    localparam [23:0] PER0  = 24'd1301606;   // 5084.4 samples (63.555 us)
+    localparam [23:0] PER_LO = 24'd1299456;  // 5076
+    localparam [23:0] PER_HI = 24'd1303552;  // 5092
+    reg [31:0] lt_q, nxt_q;                  // line start / next start, 1/256 sample
+    reg [23:0] per_q;                        // line period, 1/256 sample
+    reg [19:0] hw_q;                         // average half width of H, 1/256 sample
+    reg        hw_ok;
+    wire [23:0] next_lt = nxt_q[31:8];
+    reg        locked;
+    reg [8:0]  miss;
+    reg [23:0] cand_last;
+    reg [3:0]  cand_cnt;
+    reg        pend;                         // this line's pulse has not ended yet
     reg [9:0]  n;
     reg        in_v;
     reg        line_ev, line_real;
     reg [23:0] lt;                 // current line start (sync leading edge)
     reg [23:0] lr;                 // its sync trailing edge (real lines)
-    wire [23:0] since_last = t - last_line;
-    wire [23:0] fall_gap   = t_fall - last_line;
+    wire [23:0] e_raw   = t_fall - next_lt;
+    wire        in_win  = ($signed(e_raw) >= -$signed(W)) && ($signed(e_raw) <= $signed(W));
+    wire [23:0] c_raw   = t_fall - cand_last - L;
+    wire        cand_ok = ($signed(c_raw) >= -$signed(W)) && ($signed(c_raw) <= $signed(W));
+    wire [23:0] late    = t - next_lt;
+    wire        start_e = fall_ev && (!locked || in_win);           // line starts at this edge
+    wire        reacq   = is_h && !pend && cand_ok && (cand_cnt >= 4'd7);
+    wire [23:0] fall_gap = t_fall - lt;      // broad pulse from the last line start
+
+    // ---- field: vertical sync with a flywheel ----
+    // Vertical sync is found from the fraction of time below the slicing
+    // level: a leaky integrator (time constant 1024 samples, 12.8 us) of
+    // "below" crosses 0.6 of full scale ~940 samples into a broad pulse
+    // (27 us) but never on a H pulse (4.7 us: 0.31) or the equalising
+    // pulses. Requiring one unbroken pulse of 15 us (the first version)
+    // failed on weak signals: noise cut the broad pulses apart and nearly
+    // every field had to be synthesised (field test, 20..26 dB video SNR).
+    // A crossing starts a field 258..268 lines after the last field start
+    // (where it belongs), or whenever it comes 260..266 lines after the
+    // previous crossing (a regular vertical sync wins over the synthesised
+    // phase; without this a synthesised phase that drifted off never let a
+    // real sync in again: the field test saw no real field at all). Taking
+    // any crossing 250+ lines on let noise crossings up to 12 lines early
+    // move the field, and the output lock re-acquired several times a
+    // second on a weak signal. Without one the field is synthesised 268
+    // lines after the last start, continuing at line 5 or 6 alternately:
+    // 262.5 lines per field on average. (Continuing at a fixed line gave
+    // 262-line fields, half a line short each, which the output lock could
+    // not follow: it re-acquired almost every frame.)
+    localparam [20:0] V_ON  = 21'd629146;   // 0.6 * 2^20
+    localparam [20:0] V_OFF = 21'd314573;   // 0.3 * 2^20, re-arm
+    localparam [23:0] V_LAG = 24'd938;      // crossing delay into the pulse
+    reg  [20:0] vacc;
+    reg         v_armed, vs_ev;
+    reg  [23:0] t_vs;
+    always @(posedge clk) begin
+        vs_ev <= 1'b0;
+        if (rst) begin
+            vacc <= 0; v_armed <= 1'b1;
+        end else if (in_valid) begin
+            vacc <= vacc + ((vid < thr) ? 21'd1024 : 21'd0) - {10'd0, vacc[20:10]};
+            if (v_armed && vacc >= V_ON) begin
+                vs_ev   <= 1'b1;
+                v_armed <= 1'b0;
+                t_vs    <= t - V_LAG;
+            end else if (!v_armed && vacc < V_OFF) begin
+                v_armed <= 1'b1;
+            end
+        end
+    end
+    wire [23:0] vs_gap  = t_vs - lt;        // broad pulse start from the last line start
+    wire        vs_par  = (vs_gap >= 24'd1271) && (vs_gap < 24'd3813);
+    reg  [9:0]  m_vs;                       // lines since the last crossing
+    always @(posedge clk) begin
+        if (rst || vs_ev)                 m_vs <= 0;
+        else if (line_ev && m_vs != 10'd1023) m_vs <= m_vs + 10'd1;
+    end
+    wire fs_real  = vs_ev && ((n >= 10'd258 && n <= 10'd268) || (n == 10'd1023) ||
+                              (m_vs >= 10'd260 && m_vs <= 10'd266));
+    wire fs_synth = line_ev && (n == 10'd268);
+
+    // Loop error of a real H (pulse centre - half width - line start),
+    // limited to the window; three pipeline stages after the pulse end
+    // (the next line is thousands of samples away).
+    wire [31:0] e_c   = {t_fall, 8'd0} + {1'b0, width[23:0], 7'd0} - {12'd0, hw_q} - lt_q;
+    reg  signed [31:0] e_s;
+    reg  signed [31:0] e_l;
+    reg  [1:0]  e_v;
+    wire signed [27:0] e_lp  = e_l >>> 4;
+    wire signed [24:0] per_n = $signed({1'b0, per_q}) + (e_l >>> 10);
+    wire signed [25:0] hw_d  = $signed({1'b0, width[12:0], 7'd0}) - $signed({1'b0, hw_q});
+    always @(posedge clk) begin
+        e_s <= $signed(e_c);
+        e_l <= (e_s > $signed({W, 8'd0}))  ? $signed({W, 8'd0}) :
+               (e_s < -$signed({W, 8'd0})) ? -$signed({W, 8'd0}) : e_s;
+        e_v <= {e_v[0], pulse_end && pend && is_h && hw_ok && !rst};
+    end
 
     always @(posedge clk) begin
         line_ev <= 1'b0;
         if (rst) begin
-            last_line <= 0;
-            n <= 10'd1023;
-            in_v <= 1'b0;
+            locked <= 1'b0; miss <= 0; cand_cnt <= 0; pend <= 1'b0;
+            n <= 10'd1023; in_v <= 1'b0;
+            per_q <= PER0; hw_ok <= 1'b0;
         end else begin
-            if (is_h && fall_gap >= L_MIN) begin
+            if (start_e || reacq) begin
                 line_ev   <= 1'b1;
-                line_real <= 1'b1;
-                lt        <= t_fall;
-                lr        <= t_rise;
-                last_line <= t_fall;
-                in_v      <= 1'b0;
+                line_real <= reacq;
+                if (locked && !reacq) begin  // edge in the window: the prediction
+                    lt    <= nxt_q[31:8];
+                    lt_q  <= nxt_q;
+                    nxt_q <= nxt_q + {8'd0, per_q};
+                end else begin               // (re)acquire at the edge
+                    lt    <= t_fall;
+                    lt_q  <= {t_fall, 8'd0};
+                    nxt_q <= {t_fall, 8'd0} + {8'd0, per_q};
+                end
+                if (reacq) lr <= t_rise;
+                locked    <= 1'b1;
+                pend      <= !reacq;
+                cand_cnt  <= 0;
+                if (reacq) begin miss <= 0; in_v <= 1'b0; end
                 if (n != 10'd1023) n <= n + 10'd1;
-            end else if (since_last >= L_SYNTH) begin
+            end else if (locked && ($signed(late) > $signed(W_SYN))) begin
                 line_ev   <= 1'b1;
                 line_real <= 1'b0;
-                lt        <= last_line + L;
-                last_line <= last_line + L;
+                lt        <= nxt_q[31:8];
+                lt_q      <= nxt_q;
+                nxt_q     <= nxt_q + {8'd0, per_q};
+                pend      <= 1'b0;
+                if (miss == 9'd300) locked <= 1'b0; else miss <= miss + 9'd1;
                 if (n != 10'd1023) n <= n + 10'd1;
             end
-            if (is_broad && !in_v) begin
+            if (pulse_end) begin
+                if (pend) begin               // the pulse that started this line
+                    pend <= 1'b0;
+                    if (is_h) begin
+                        line_real <= 1'b1;
+                        lr        <= t_rise;
+                        miss      <= 0;
+                        in_v      <= 1'b0;
+                        hw_q  <= hw_ok ? hw_q + hw_d[25:6] : {width[12:0], 7'd0};
+                        hw_ok <= 1'b1;
+                    end
+                end else if (is_h && !reacq) begin   // a H outside the window
+                    cand_cnt  <= cand_ok ? ((cand_cnt == 4'd15) ? cand_cnt : cand_cnt + 4'd1) : 4'd1;
+                    cand_last <= t_fall;
+                end
+            end
+            if (e_v[1]) begin
+                nxt_q <= nxt_q + {{4{e_lp[27]}}, e_lp};
+                per_q <= (per_n < $signed({1'b0, PER_LO})) ? PER_LO :
+                         (per_n > $signed({1'b0, PER_HI})) ? PER_HI : per_n[23:0];
+            end
+            if (fs_real) begin
                 in_v   <= 1'b1;
                 n      <= 10'd0;
-                parity <= (fall_gap >= 24'd1271) && (fall_gap < 24'd3813);
+                parity <= vs_par;
+            end else if (fs_synth) begin
+                n      <= parity ? 10'd5 : 10'd6;   // 268 - 262.5 on average; other parity
+                parity <= ~parity;
             end
         end
     end
@@ -175,14 +333,15 @@ module video_in (
     // Per-field statistics: counted from one field start to the next.
     reg [15:0] rl_cnt, fl_cnt;
     always @(posedge clk) begin
-        if (is_broad && !in_v) begin
+        if (fs_real || fs_synth) begin
             real_lines  <= rl_cnt;
             field_lines <= fl_cnt;
             rl_cnt <= 0;
             fl_cnt <= 0;
-        end else if (line_ev) begin
-            fl_cnt <= fl_cnt + 16'd1;
-            if (line_real) rl_cnt <= rl_cnt + 16'd1;
+        end else begin
+            if (line_ev) fl_cnt <= fl_cnt + 16'd1;
+            // a line becomes real when its pulse ends as H (or on re-acquire)
+            if ((pulse_end && pend && is_h) || (line_ev && reacq)) rl_cnt <= rl_cnt + 16'd1;
         end
     end
 
@@ -368,19 +527,20 @@ module video_in (
 
     // Event counts per 2^26 clocks (0.795 s) for the status packet.
     reg [25:0] st_win;
-    reg [15:0] h_cnt, b_cnt, f_cnt, ln_cnt, p1_cnt;
-    reg [15:0] h_ps, b_ps, f_ps, ln_ps, p1_ps;
-    wire       par_new = (fall_gap >= 24'd1271) && (fall_gap < 24'd3813);
+    reg [15:0] h_cnt, b_cnt, f_cnt, ln_cnt, p1_cnt, v_cnt;
+    reg [15:0] h_ps, b_ps, f_ps, ln_ps, p1_ps, v_ps;
+    wire       par_new = vs_par;
     always @(posedge clk) begin
         st_win <= st_win + 26'd1;
         if (&st_win) begin
-            h_ps <= h_cnt; b_ps <= b_cnt; f_ps <= f_cnt; ln_ps <= ln_cnt; p1_ps <= p1_cnt;
-            h_cnt <= 0; b_cnt <= 0; f_cnt <= 0; ln_cnt <= 0; p1_cnt <= 0;
+            h_ps <= h_cnt; b_ps <= b_cnt; f_ps <= f_cnt; ln_ps <= ln_cnt; p1_ps <= p1_cnt; v_ps <= v_cnt;
+            h_cnt <= 0; b_cnt <= 0; f_cnt <= 0; ln_cnt <= 0; p1_cnt <= 0; v_cnt <= 0;
         end else begin
             if (is_h)              h_cnt  <= h_cnt + 16'd1;
-            if (is_broad)          b_cnt  <= b_cnt + 16'd1;
-            if (is_broad && !in_v) f_cnt  <= f_cnt + 16'd1;
-            if (is_broad && !in_v && par_new) p1_cnt <= p1_cnt + 16'd1;   // second fields
+            if (fs_synth)          b_cnt  <= b_cnt + 16'd1;   // fields synthesised
+            if (vs_ev)             v_cnt  <= v_cnt + 16'd1;   // vertical sync detections
+            if (fs_real)           f_cnt  <= f_cnt + 16'd1;
+            if (fs_real && par_new) p1_cnt <= p1_cnt + 16'd1;  // second fields
             if (n_v)               ln_cnt <= ln_cnt + 16'd1;   // pixels written
         end
     end
@@ -388,8 +548,8 @@ module video_in (
         gc[17:2],                           // 255:240
         c_dbg[31:16], c_dbg[47:32],         // 239:208  |R|, NCO offset
         c_dbg[15:0], f_ps, b_ps, h_ps,      // 207:144  last |B|/16
-        {3'd0, gain}, {2'd0, s_avg},        // 143:112
-        {2'd0, thr}, {2'd0, black_f}, {2'd0, tip_f}, {2'd0, black},   // 111:48
+        {3'd0, gain}, v_ps,                 // 143:112  (v_ps: vertical sync detections)
+        {2'd0, thr}, {2'd0, black_f}, {2'd0, tip_f}, jumps,           // 111:48
         {p1_ps[10:0], lvl_n}, {6'd0, n},    // 47:16  (fields with parity 1 | lvl_n)
         real_lines                          // 15:0
     };

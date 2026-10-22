@@ -29,8 +29,10 @@ gain control, AFC and channel selection.
 - **[C5VRX](https://github.com/Twotoz/C5VRX)** by Twotoz and the C5VRX
   contributors — the ESP32-C5 FPV receiver. This project uses its
   MODEM_DIAG IQ GPIO output (lane mapping and pin order, C5VRX-5
-  `main/rf.c`) and follows its "C5 RF front end plus external DSP logic"
-  research (C5VRX-4 `RESEARCH.md`). See [Credits](#credits).
+  `main/rf.c`), follows its "C5 RF front end plus external DSP logic"
+  research (C5VRX-4 `RESEARCH.md`), and its sync separator uses the line
+  grid idea of the C5VRX-4 sync flywheel (`SYNC_FLYWHEEL.md`). See
+  [Credits](#credits).
 
 ## Hardware
 
@@ -210,7 +212,10 @@ GPL-3.0-only — see [LICENSE](LICENSE).
 This project incorporates/adapts the ESP32-C5 MODEM_DIAG IQ GPIO routing
 (Q4/I4 lane mapping and pin order, C5VRX-5 `main/rf.c`) and the
 "C5 RF front end plus external DSP logic" architecture research
-(C5VRX-4 `legacy/c5vrx4/RESEARCH.md`) from
+(C5VRX-4 `legacy/c5vrx4/RESEARCH.md`), and the idea of a PLL line grid
+that only accepts sync pulses near its prediction (C5VRX-4 sync flywheel,
+`legacy/c5vrx4/SYNC_FLYWHEEL.md`; reimplemented here as the line PLL in
+`src/video_in.v`, which times lines and does not rebuild sync pulses) from
 [C5VRX](https://github.com/Twotoz/C5VRX) by Twotoz and the C5VRX
 contributors. Visit the [official C5VRX website](https://twotoz.github.io/C5VRX/)
 for the original project and its Discord invite. See the source and

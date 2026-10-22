@@ -31,7 +31,8 @@ module video_timing (
     output reg         hsync,
     output reg         vsync,
     output reg         frame_start,
-    output reg         line_start
+    output reg         line_start,
+    output reg  [15:0] jumps          // re-acquisitions so far (status)
 );
     localparam H_ACTIVE = 1280, H_SYNC = 40, H_BP = 227;     // front porch: the rest (~110)
     localparam [10:0] H_START = H_SYNC + H_BP;                // first picture pixel: 267
@@ -50,6 +51,7 @@ module video_timing (
     reg signed [10:0] integ;
     reg [1:0]  since_go;                     // frames without a go, saturating at 3
     reg        locked;
+    reg        stray;                        // the last go was far from TARGET
 
     // Phase of a go, computed over three clocks after it (once per frame):
     // lines from TARGET wrapped to -375..374, then pixels, then the loop.
@@ -85,15 +87,21 @@ module video_timing (
         if (rst) begin
             hc <= 0; vc <= 0; h_last <= BASE - 11'd1;
             e_frame <= 0; integ <= 0;
-            since_go <= 2'd3; locked <= 1'b0;
-            ph <= 0;
-        end else if (go && (!locked || !near)) begin
+            since_go <= 2'd3; locked <= 1'b0; jumps <= 0;
+            ph <= 0; stray <= 1'b0;
+        end else if (go && (!locked || (!near && stray))) begin
             // (re)acquire: move straight to the wanted position
             vc <= TARGET; hc <= 0; h_last <= BASE - 11'd1;
             locked <= 1'b1; since_go <= 0; integ <= 0; e_frame <= 0;
-            ph <= 0;
+            jumps <= jumps + 16'd1;
+            ph <= 0; stray <= 1'b0;
         end else begin
-            ph <= {ph[1:0], go};
+            // A single go far from TARGET is ignored (no phase update); a
+            // second one in a row re-acquires. Re-acquiring on every stray
+            // go disturbed the picture several times a second on weak
+            // signals.
+            if (go) stray <= locked && !near;
+            ph <= {ph[1:0], go && near};
             if (go) begin
                 vc_go    <= vc;
                 hc_go    <= hc;

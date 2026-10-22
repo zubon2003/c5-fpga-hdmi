@@ -74,6 +74,7 @@ module top (
     );
 
     wire [255:0] vin_status;   // from video_in below
+    wire [15:0]  out_jumps;    // from video_timing below
     wire         cdbg_v;
     wire [31:0]  cdbg_w;
     wire       rx_valid, tx_valid, tx_ready, la_busy;
@@ -133,7 +134,7 @@ module top (
         .first(first_line), .act(act_start),
         .we(lb_we), .waddr(lb_waddr), .wdata(lb_wdata),
         .field_tg(field_tg), .parity(field_parity),
-        .real_lines(real_lines), .field_lines(field_lines), .status(vin_status),
+        .real_lines(real_lines), .field_lines(field_lines), .status(vin_status), .jumps(out_jumps),
         .cdbg_v(cdbg_v), .cdbg_w(cdbg_w)
     );
 
@@ -162,7 +163,8 @@ module top (
     wire de, hsync, vsync, frame_start, line_start;
     video_timing u_timing (
         .clk(clk_pixel), .rst(rst), .go(field_go), .x(x), .y(y), .de(de),
-        .hsync(hsync), .vsync(vsync), .frame_start(frame_start), .line_start(line_start)
+        .hsync(hsync), .vsync(vsync), .frame_start(frame_start), .line_start(line_start),
+        .jumps(out_jumps)
     );
 
     wire signed [13:0] sc_rd;
