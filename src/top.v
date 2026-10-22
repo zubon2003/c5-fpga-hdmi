@@ -7,7 +7,8 @@
 //   'P' picture display, 'W' waveform monitor display,
 //   'u' / 'd' first active line -/+ 1, 'h' / 'l' picture start -/+ 16 samples
 //   (0.2 us), 'f' field offset direction, 'c' colour on/off, 'v' V sign,
-//   'a' / 'z' colour saturation +/- 0.25x, '[' / ']' hue -/+ 11.25 degrees
+//   'a' / 'z' colour saturation +/- 0.25x, '[' / ']' hue -/+ 11.25 degrees,
+//   'm' FM demodulator mode 0..3 (src/fm_demod.v; 1 at power-up)
 module top (
     input  wire       clk,          // 50 MHz
     output wire       led,
@@ -64,12 +65,13 @@ module top (
         .sym_valid(sym_valid), .sym(sym), .early_cnt(early_cnt), .late_cnt(late_cnt)
     );
 
+    reg  [1:0]         fm_mode = 2'd1;      // PLL fast; set from the UART below
     wire               fm_valid;
     wire signed [13:0] fm_vid;
     wire [7:0]         fm_sym;
     wire signed [9:0]  fm_d;
     fm_demod u_fm (
-        .clk(clk_iq), .rst(rst_iq), .in_valid(sym_valid), .sym(sym),
+        .clk(clk_iq), .rst(rst_iq), .in_valid(sym_valid), .sym(sym), .mode(fm_mode),
         .out_valid(fm_valid), .vid(fm_vid), .sym_out(fm_sym), .d_out(fm_d)
     );
 
@@ -120,6 +122,7 @@ module top (
             "z": if (sat != 4'd0)  sat <= sat - 4'd1;
             "[": hue <= hue - 5'd1;
             "]": hue <= hue + 5'd1;
+            "m": fm_mode <= fm_mode + 2'd1;
             default: ;
         endcase
     end
@@ -127,25 +130,32 @@ module top (
     wire        lb_we;
     wire [14:0] lb_waddr;
     wire [15:0] lb_wdata;
-    wire        field_tg, field_parity;
+    wire        field_tg, field_parity, field_real;
     wire [15:0] real_lines, field_lines;
     video_in u_vin (
         .clk(clk_iq), .rst(rst_iq), .in_valid(fm_valid), .vid(fm_vid), .d(fm_d),
         .first(first_line), .act(act_start),
         .we(lb_we), .waddr(lb_waddr), .wdata(lb_wdata),
-        .field_tg(field_tg), .parity(field_parity),
+        .field_tg(field_tg), .parity(field_parity), .field_real(field_real),
         .real_lines(real_lines), .field_lines(field_lines), .status(vin_status), .jumps(out_jumps),
         .cdbg_v(cdbg_v), .cdbg_w(cdbg_w)
     );
 
     // To the pixel domain: field start (edge of the toggle), quasi-static
-    // settings through two flip-flops.
+    // settings through two flip-flops. field_real is set at the field start,
+    // ~18 lines before the toggle, so it is stable when the edge arrives.
+    // Only real fields lock the output: a synthesised field (no vertical
+    // sync, e.g. signal lost) used to re-acquire the output several times a
+    // second, and the HDMI monitor / capture card lost the picture each time
+    // (blackouts in flight, 2026-10-22).
     reg [2:0] field_s;
+    reg [1:0] freal_s;
     reg [1:0] parity_s, mode_s, color_s, vinv_s;
     reg [3:0] sat_s1, sat_s2;
     reg [4:0] hue_s1, hue_s2;
     always @(posedge clk_pixel) begin
         field_s  <= {field_s[1:0], field_tg};
+        freal_s  <= {freal_s[0], field_real};
         parity_s <= {parity_s[0], field_parity ^ par_inv};
         mode_s   <= {mode_s[0], pic_mode_iq};
         color_s  <= {color_s[0], color_on};
@@ -155,7 +165,7 @@ module top (
         hue_s1   <= hue;
         hue_s2   <= hue_s1;
     end
-    wire field_go = field_s[2] ^ field_s[1];
+    wire field_go = (field_s[2] ^ field_s[1]) && freal_s[1];
 
     // ---- Video ----
     wire [10:0] x;

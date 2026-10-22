@@ -11,7 +11,8 @@ packet. From the symbols:
   sync_mhz  sync depth (porch - tip), MHz
   snr_db    20 log10(sync depth * 2.5 / porch rms): video SNR on a
             100 IRE white scale
-From the status: real H lines per field and fields per 0.8 s.
+From the status: real H lines per field, fields per 0.8 s and the colour
+killer state (1 colour on, 0 killed).
 One CSV line per measurement, also printed.
 """
 import argparse
@@ -91,8 +92,8 @@ def main():
     out = open(args.out, "a", encoding="utf-8")
     if new:
         out.write("time,cn_db,porch_mhz,sync_mhz,snr_db,lines_seen,real_lines,"
-                  "fields_per_0.8s,synth_fields_per_0.8s,out_jumps,vsync_det_per_0.8s\n")
-    print("time      C/N dB  porch MHz  sync MHz  SNR dB  real lines  fields  synth  jumps  vdet", flush=True)
+                  "fields_per_0.8s,synth_fields_per_0.8s,out_jumps,vsync_det_per_0.8s,colour\n")
+    print("time      C/N dB  porch MHz  sync MHz  SNR dB  real lines  fields  synth  jumps  vdet  colour", flush=True)
     n = 0
     while args.count == 0 or n < args.count:
         t0 = time.strftime("%H:%M:%S")
@@ -107,6 +108,8 @@ def main():
         sf = re.search(r"synth_fields/0.8s=(\d+)", st)
         oj = re.search(r"out_jumps=(\d+)", st)
         vd = re.search(r"vsync_det/0.8s=(\d+)", st)
+        co = re.search(r"colour=(\w+)", st)
+        col = (1 if co.group(1) == "on" else 0) if co else -1
         try:
             sym = np.frombuffer(open(path, "rb").read(), dtype=np.uint8)
             cn = cn_m2m4(demod.to_iq(sym))
@@ -115,11 +118,11 @@ def main():
             cn = porch = depth = snr = float("nan"); seen = 0
         def g(m):
             return int(m.group(1)) if m else -1
-        row = (t0, cn, porch, depth, snr, seen, g(rl), g(fl), g(sf), g(oj), g(vd))
-        out.write("%s,%.2f,%.3f,%.3f,%.2f,%d,%d,%d,%d,%d,%d\n" % row)
+        row = (t0, cn, porch, depth, snr, seen, g(rl), g(fl), g(sf), g(oj), g(vd), col)
+        out.write("%s,%.2f,%.3f,%.3f,%.2f,%d,%d,%d,%d,%d,%d,%d\n" % row)
         out.flush()
-        print("%s  %6.1f  %9.3f  %8.2f  %6.1f  %10d  %6d  %5d  %5d  %5d"
-              % (row[0], row[1], row[2], row[3], row[4], row[6], row[7], row[8], row[9], row[10]), flush=True)
+        print("%s  %6.1f  %9.3f  %8.2f  %6.1f  %10d  %6d  %5d  %5d  %5d  %6d"
+              % (row[0], row[1], row[2], row[3], row[4], row[6], row[7], row[8], row[9], row[10], row[11]), flush=True)
         n += 1
         time.sleep(max(0.0, args.interval - 2.6))
 

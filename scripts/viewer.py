@@ -1,13 +1,14 @@
 """Live viewer for the FPGA's HDMI output through a UVC capture device,
 with the FPGA's UART settings on the keyboard.
 
-    py -3.13 scripts/viewer.py [--device "C8 USB3.0 Video"] [--port COM4]
+    py -3.13 scripts/viewer.py [--device "C8 USB3.0 Video"] [--port COM4] [--set first=14,act=736]
 
 Window keys (sent to the FPGA as they are):
     P picture   W waveform monitor
     u / d first active line -/+ 1      h / l picture start -/+ 0.2 us
     f field offset direction           c colour on/off      v V sign
     a / z colour saturation +/- 0.25x  [ / ] hue -/+ 11.25 degrees
+    m FM demodulator mode 0..3 (0 adjacent, 1 fast PLL, 2 PLL, 3 slow PLL)
     s save a snapshot now (captures/snap_<time>.png)         q quit
     r start / stop recording a video (captures/rec_<time>.mp4)
 
@@ -19,6 +20,7 @@ captures/viewer_cmd.txt, logging to captures/viewer_log.txt:
     snap <path>            save the current frame
     rec start [path]       record the picture to an H.264 mp4 (30 fps)
     rec stop               finish the recording
+    fm <0..3>              set the FM demodulator mode (from the tracked one)
     defaults               forget the tracked settings (after reprogramming)
     status                 sync separator status (FPGA 'T'), logged
 """
@@ -40,8 +42,8 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 CAP_DIR = os.path.join(ROOT, "captures")
 CMD_FILE = os.path.join(CAP_DIR, "viewer_cmd.txt")
 LOG_FILE = os.path.join(CAP_DIR, "viewer_log.txt")
-KEYS = "PWudhlfcvaz[]"
-DEFAULTS = {"mode": "P", "first": 16, "act": 752, "f": 1, "c": 1, "v": 1, "sat": 4, "hue": 0}   # as in src/top.v
+KEYS = "PWudhlfcvaz[]m"
+DEFAULTS = {"mode": "P", "first": 16, "act": 752, "f": 1, "c": 1, "v": 1, "sat": 4, "hue": 0, "fm": 1}   # as in src/top.v
 
 
 def write_png(path, rgb, w=W, h=H):
@@ -60,7 +62,7 @@ def write_png(path, rgb, w=W, h=H):
 
 
 class Viewer:
-    def __init__(self, device, port):
+    def __init__(self, device, port, overrides=None):
         os.makedirs(CAP_DIR, exist_ok=True)
         self.frame = None
         self.frames = 0
@@ -69,6 +71,7 @@ class Viewer:
         self.running = True
         self.status = "starting"
         self.settings = dict(DEFAULTS)
+        self.settings.update(overrides or {})
         self.rec = None                # encoder process while recording
         self.rec_q = None
         self.rec_path = ""
@@ -147,12 +150,15 @@ class Viewer:
                 s["hue"] = (s["hue"] - 1) % 32
             elif ch == "]":
                 s["hue"] = (s["hue"] + 1) % 32
+            elif ch == "m":
+                s["fm"] = (s["fm"] + 1) % 4
         self.log(f"sent {chars!r} -> {self.describe()}")
 
     def describe(self):
         s = self.settings
         return (f"mode {s['mode']}  first line {s['first']}  start {s['act'] / 80:.2f} us  "
-                f"field flip {s['f']}  colour {s['c']}  V inv {s['v']}  sat {s['sat'] / 4:.2f}x  hue {s['hue'] * 11.25:+.1f} deg")
+                f"field flip {s['f']}  colour {s['c']}  V inv {s['v']}  sat {s['sat'] / 4:.2f}x  hue {s['hue'] * 11.25:+.1f} deg  "
+                f"FM {('adjacent', 'PLL fast', 'PLL', 'PLL slow')[s['fm']]}")
 
     def capture(self, mode, path):
         with self.ser_lock:
@@ -190,6 +196,7 @@ class Viewer:
             vals[k] = sgn(vals[k])
         vals[13] = vals[13] - 0x10000 if vals[13] & 0x8000 else vals[13]
         vals[2] = f"{vals[2] >> 5}|{vals[2] & 31}"
+        vals[12] = f"{vals[12] & 0x7fff} colour={'on' if vals[12] & 0x8000 else 'KILLED'}"
         self.log("status " + " ".join(f"{n}={v}" for n, v in zip(names, vals)))
 
     def snapshot(self, path):
@@ -281,6 +288,12 @@ class Viewer:
                 self.send(parts[1])
             elif parts[0] == "cap":
                 self.capture(parts[1], os.path.join(ROOT, parts[2]))
+            elif parts[0] == "fm":
+                n = (int(parts[1]) - self.settings["fm"]) % 4
+                if n:
+                    self.send("m" * n)
+                else:
+                    self.log(f"fm already {parts[1]}")
             elif parts[0] == "status":
                 self.status_cmd()
             elif parts[0] == "defaults":
@@ -324,7 +337,7 @@ class Viewer:
             self.label.configure(image=self.photo)
         rec = f"   REC {self.rec_frames / 30:.0f} s" if self.rec is not None else ""
         self.bar.configure(text=f" {self.describe()}   frames {frames}   {self.status if frame is None else ''}{rec}"
-                                f"   keys: P W u d h l f c v a z [ ]  s=snapshot r=record q=quit")
+                                f"   keys: P W u d h l f c v a z [ ] m  s=snapshot r=record q=quit")
         if self.running:
             self.root.after(33, self.redraw)
 
@@ -348,8 +361,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", default="C8 USB3.0 Video")
     ap.add_argument("--port", default="COM4")
+    ap.add_argument("--set", default="", help="tracked settings the FPGA already has, e.g. first=14,act=736")
     args = ap.parse_args()
-    Viewer(args.device, args.port).run()
+    over = {k: (v if k == "mode" else int(v)) for k, v in (kv.split("=") for kv in args.set.split(",") if kv)}
+    Viewer(args.device, args.port, over).run()
 
 
 if __name__ == "__main__":

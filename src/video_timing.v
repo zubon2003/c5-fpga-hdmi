@@ -17,10 +17,14 @@
 // Each `go` (input field ready) measures the phase p = how far the output
 // frame is ahead of the wanted position (go at line TARGET, pixel 0), in
 // pixels; e = p / 16; E = e + I, I += e / 16 (host simulation of this loop:
-// peak error ~2.5 lines while locking, then within ~0.1 line). A go more
-// than JUMP lines off, or the first go after 3 frames without one, moves
-// the counters straight to TARGET once (one disturbed frame).
-// Without go the frame free-runs at BASE (59.93 Hz).
+// peak error ~2.5 lines while locking, then within ~0.1 line). Two gos in a
+// row more than JUMP lines off, or the first go after power-up, move the
+// counters straight to TARGET once (one disturbed frame).
+// Without go for 3 frames (input lost: top.v sends go for real fields
+// only) the frame keeps running at the last frequency estimate (E = I) and
+// stays locked, so a short loss of the input does not change the HDMI
+// timing; unlocking there made the next go re-acquire every time, and the
+// monitor blanked the picture for each (blackouts in flight).
 module video_timing (
     input  wire        clk,
     input  wire        rst,
@@ -120,7 +124,7 @@ module video_timing (
                 if (vc == V_TOTAL - 1) begin
                     vc <= 0;
                     if (since_go == 2'd3) begin
-                        locked <= 1'b0; e_frame <= 0; integ <= 0;
+                        e_frame <= integ;          // hold the frequency, stay locked
                     end else begin
                         since_go <= since_go + 2'd1;
                     end

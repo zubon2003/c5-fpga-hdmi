@@ -46,6 +46,7 @@ module video_in (
     output reg  [14:0]        waddr,
     output reg  [15:0]        wdata,
     output reg                field_tg,     // toggles when active line 2 is written
+    output reg                field_real,   // this field started at a real vertical sync after a field with real lines
     output reg                parity,
     output reg  [15:0]        real_lines,   // real H line starts per field, for display
     output reg  [15:0]        field_lines,  // all line starts per field
@@ -323,7 +324,11 @@ module video_in (
                 in_v   <= 1'b1;
                 n      <= 10'd0;
                 parity <= vs_par;
+                // only after a field with mostly real lines: noise alone gives
+                // a vertical sync now and then (signal lost: ~1 per 0.8 s)
+                field_real <= (real_lines >= 16'd128);
             end else if (fs_synth) begin
+                field_real <= 1'b0;
                 n      <= parity ? 10'd5 : 10'd6;   // 268 - 262.5 on average; other parity
                 parity <= ~parity;
             end

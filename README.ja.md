@@ -32,7 +32,8 @@ C5VRX-5 のファームウェアは、受信機の生の 4 ビット IQ サン�
   `main/rf.c`）を使い、「C5 を RF フロントエンドにして、信号処理は外部の
   ロジックで行う」という研究（C5VRX-4 の `RESEARCH.md`）に沿っています。
   同期分離には C5VRX-4 の sync flywheel（`SYNC_FLYWHEEL.md`）のライン格子の
-  考え方を使っています。[クレジット](#クレジット) を参照してください。
+  考え方を、FM 復調には C5VRX-5 の U85Q 位相トラッカーと kp ラダーの考え方を
+  広げて使っています。[クレジット](#クレジット) を参照してください。
 
 ## 必要なハードウェア
 
@@ -217,8 +218,12 @@ GPIO 出力（Q4/I4 のレーンの割り当てとピン順、C5VRX-5 の `main/
 構成の研究（C5VRX-4 の `legacy/c5vrx4/RESEARCH.md`）と、予測位置の近くの
 同期パルスだけを受け付ける PLL ライン格子の考え方（C5VRX-4 の sync flywheel、
 `legacy/c5vrx4/SYNC_FLYWHEEL.md`。ここでは `src/video_in.v` のライン PLL として
-新しく実装し、ラインのタイミングだけに使っています。同期パルスの再生はしません）を
-取り入れています。
+新しく実装し、ラインのタイミングだけに使っています。同期パルスの再生はしません）と、
+ループゲインを選べる位相トラッカー型の FM 復調（C5VRX-5 の U85Q トラッカーと
+kp ラダー、`main/u85q.bsasm`、`main/kp_ladder.h`、`research/README.md`。ここでは
+`src/fm_demod.v` で 2 次ループ、振幅で絞る補正、途切れないモード切り替えを加えて
+います。`research/demod_sim.py` の信号とチャネルのモデルは C5VRX-5 の距離
+シミュレータ `research/sim.py` に沿っています）を取り入れています。
 元のプロジェクトと Discord への招待は
 [C5VRX 公式サイト](https://twotoz.github.io/C5VRX/) にあります。適用される
 条件は、ソースとライセンスの表示を参照してください（C5VRX は

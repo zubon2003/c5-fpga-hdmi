@@ -25,6 +25,17 @@
 // average of B over ~8 lines (per-line burst noise gave line-to-line hue
 // and saturation streaks), and uc / us / gc come from R. B is kept to
 // 16 bits (>> 4) for this.
+// Colour killer: on a weak signal the FM noise alone gives bursts far
+// above KILL, so the picture filled with colour noise (walk test
+// 2026-10-22). A real burst has the same phase every line, so |R| (the
+// average vector) is close to the average of |B|; noise bursts have random
+// phases and their 8-line average shrinks to ~1/4 of it. Colour goes off
+// after 16 lines in a row with |R| < 3/8 avg |B| and back on after 16
+// lines with |R| >= 5/8 avg |B| (the gap and the line count keep it from
+// flickering). Without any burst for 2^20 samples (13 ms: no real lines,
+// e.g. VTX off) colour goes off at once, since no line runs the vote and
+// gc would otherwise keep its last value. col_ok is in the status (dbg
+// bit 15).
 module chroma #(
     parameter [20:0] KILL = 21'd38,          // on |R|, i.e. |B| / 16
     parameter [31:0] LOCK_STEP = 32'd16      // NCO increment step per line
@@ -123,6 +134,13 @@ module chroma #(
         end
     end
 
+    // Time since the last burst.
+    reg [19:0] no_b;
+    always @(posedge clk) begin
+        if (rst || start)              no_b <= 0;
+        else if (in_valid && !(&no_b)) no_b <= no_b + 20'd1;
+    end
+
     // Per-line reference, sequential.
     localparam F_IDLE = 4'd0, F_MAG = 4'd1, F_DIV = 4'd2, F_MULC = 4'd3, F_MULS = 4'd4,
                F_X1 = 4'd5, F_X2 = 4'd6, F_IIR = 4'd7, F_ABS = 4'd8;
@@ -131,6 +149,12 @@ module chroma #(
     reg signed [31:0] x1, x2;
     reg               p_ok;                        // previous burst was strong
     reg signed [18:0] rcf, rsf;                    // R, 3 fraction bits
+    reg        [18:0] bmf;                         // average |B|, 3 fraction bits
+    reg               col_ok;                      // colour killer state
+    reg        [3:0]  col_n;                       // lines voting against it
+    wire       [15:0] bm_avg = bmf[18:3];
+    wire              coh_lo = {mag, 3'd0} < {2'd0, bm_avg, 1'b0} + {3'd0, bm_avg};        // < 3/8
+    wire              coh_hi = {mag, 3'd0} >= {1'b0, bm_avg, 2'b0} + {3'd0, bm_avg};       // >= 5/8
     wire signed [15:0] rc16 = rcf >>> 3;
     wire signed [15:0] rs16 = rsf >>> 3;
     function signed [15:0] sat16(input signed [20:0] x);
@@ -143,7 +167,7 @@ module chroma #(
     reg  [15:0] last_bmag;
     always @(posedge clk) if (f == F_X2) last_bmag <= b_mag;
     assign dbg = {(inc_off > 32'sd32767) ? 16'h7fff : (inc_off < -32'sd32767) ? 16'h8001 : inc_off[15:0],
-                  mag[15:0], last_bmag};
+                  mag[15:0], col_ok, last_bmag[14:0]};
     reg [20:0] ac, as_, mag;
     reg [24:0] rem, q;          // 2^24 / mag
     reg [4:0]  i;
@@ -167,6 +191,14 @@ module chroma #(
             p_ok <= 1'b0;
             rcf  <= 0;
             rsf  <= 0;
+            bmf  <= 0;
+            col_ok <= 1'b1;
+            col_n  <= 0;
+        end else if (&no_b) begin
+            gc     <= 0;
+            col_ok <= 1'b0;
+            col_n  <= 0;
+            f      <= F_IDLE;
         end else case (f)
             F_IDLE: if (start) begin
                 b16c <= sat16(bc >>> 4);
@@ -195,6 +227,7 @@ module chroma #(
                     // difference and the shift unsigned (R ran away on the board)
                     rcf <= rcf + (($signed({b16c, 3'b000}) - rcf) >>> 3);
                     rsf <= rsf + (($signed({b16s, 3'b000}) - rsf) >>> 3);
+                    bmf <= bmf + {3'd0, b_mag} - {3'd0, bmf[18:3]};
                 end
                 f <= F_ABS;
             end
@@ -240,7 +273,18 @@ module chroma #(
                 i     <= 5'd19;
                 f     <= F_MULS;
             end else begin
-                if (mag < KILL) begin
+                // colour killer vote, once per line
+                if (col_ok ? coh_lo : coh_hi) begin
+                    if (col_n == 4'd15) begin
+                        col_ok <= ~col_ok;
+                        col_n  <= 0;
+                    end else begin
+                        col_n <= col_n + 4'd1;
+                    end
+                end else begin
+                    col_n <= 0;
+                end
+                if (mag < KILL || !col_ok) begin
                     gc <= 0;
                 end else begin
                     uc <= uc_n;

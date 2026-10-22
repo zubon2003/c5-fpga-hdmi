@@ -30,9 +30,10 @@ gain control, AFC and channel selection.
   contributors — the ESP32-C5 FPV receiver. This project uses its
   MODEM_DIAG IQ GPIO output (lane mapping and pin order, C5VRX-5
   `main/rf.c`), follows its "C5 RF front end plus external DSP logic"
-  research (C5VRX-4 `RESEARCH.md`), and its sync separator uses the line
-  grid idea of the C5VRX-4 sync flywheel (`SYNC_FLYWHEEL.md`). See
-  [Credits](#credits).
+  research (C5VRX-4 `RESEARCH.md`), its sync separator uses the line
+  grid idea of the C5VRX-4 sync flywheel (`SYNC_FLYWHEEL.md`), and its
+  FM demodulator extends the C5VRX-5 U85Q phase tracker and kp ladder.
+  See [Credits](#credits).
 
 ## Hardware
 
@@ -215,7 +216,13 @@ This project incorporates/adapts the ESP32-C5 MODEM_DIAG IQ GPIO routing
 (C5VRX-4 `legacy/c5vrx4/RESEARCH.md`), and the idea of a PLL line grid
 that only accepts sync pulses near its prediction (C5VRX-4 sync flywheel,
 `legacy/c5vrx4/SYNC_FLYWHEEL.md`; reimplemented here as the line PLL in
-`src/video_in.v`, which times lines and does not rebuild sync pulses) from
+`src/video_in.v`, which times lines and does not rebuild sync pulses), and
+the phase-tracker FM demodulator with selectable loop gain (C5VRX-5 U85Q
+tracker and kp ladder, `main/u85q.bsasm`, `main/kp_ladder.h` and
+`research/README.md`; extended here in `src/fm_demod.v` with a
+second-order loop, an amplitude-gated correction and seamless mode
+switching, with the signal and channel model of the C5VRX-5 range
+simulator `research/sim.py` followed in `research/demod_sim.py`) from
 [C5VRX](https://github.com/Twotoz/C5VRX) by Twotoz and the C5VRX
 contributors. Visit the [official C5VRX website](https://twotoz.github.io/C5VRX/)
 for the original project and its Discord invite. See the source and
