@@ -27,8 +27,10 @@
 // Colour (chroma.v): per line burst reference on the back porch; per pixel
 // U = -Re(M conj(R)), V = Im(M conj(R)), normalised to the burst (the
 // display inverts V by default: that gave natural hues on the board).
-// Pixels: 640 per line from act (default 9.4 us) after the sync edge,
-// 3 per 20 samples (12 MS/s, 53.3 us), written to a 32-line ring as
+// Pixels: from act (default 9.4 us) after the sync edge over 53.3 us,
+// 640 per line, 12 per 80 samples (12 MS/s), or with ar43 (4:3 picture)
+// 480, 9 per 80 samples (9 MS/s; Nyquist 4.5 MHz, above the 3.64 MHz
+// first null of the demodulator's boxcar). Written to a 32-line ring as
 // {Y, C}: Y 8-bit luma, C signed 8-bit U on even and V on odd pixels;
 // address = (active line mod 32) * 640 + pixel. 16 lines were too few: the
 // 720p output uses 66.75 us per field line against 63.56 us coming in, so
@@ -42,6 +44,7 @@ module video_in (
     input  wire signed [9:0]  d,
     input  wire [9:0]         first,
     input  wire [12:0]        act,
+    input  wire               ar43,         // 480 pixels per line instead of 640
     output reg                we,
     output reg  [14:0]        waddr,
     output reg  [15:0]        wdata,
@@ -446,8 +449,10 @@ module video_in (
         end
     end
 
-    // ---- pixels: 3 per 20 samples from act ----
-    reg [4:0]  frac;
+    // ---- pixels: 12 (or 9) per 80 samples from act ----
+    wire [6:0] px_step = ar43 ? 7'd9 : 7'd12;
+    wire [9:0] px_n    = ar43 ? 10'd480 : 10'd640;
+    reg [6:0]  frac;
     reg [9:0]  px;
     reg        p_v;
     reg [9:0]  p_px;
@@ -458,9 +463,9 @@ module video_in (
         if (line_ev) begin
             frac <= 0;
             px   <= 0;
-        end else if (in_valid && active && rel >= act && px < 10'd640) begin
-            if (frac + 5'd3 >= 5'd20) begin
-                frac <= frac + 5'd3 - 5'd20;
+        end else if (in_valid && active && rel >= act && px < px_n) begin
+            if (frac + px_step >= 7'd80) begin
+                frac <= frac + px_step - 7'd80;
                 p_v  <= 1'b1;
                 p_px <= px;
                 p_d  <= vid - black;
@@ -468,7 +473,7 @@ module video_in (
                 p_ms <= ms;
                 px   <= px + 10'd1;
             end else begin
-                frac <= frac + 5'd3;
+                frac <= frac + px_step;
             end
         end
     end
@@ -562,6 +567,6 @@ module video_in (
     always @(posedge clk) begin
         if (rst) field_tg <= 1'b0;
         // after active line 2: the display reads one line ahead to interpolate
-        else if (n_v && idx_n == 10'd2 && n_px == 10'd639) field_tg <= ~field_tg;
+        else if (n_v && idx_n == 10'd2 && n_px == px_n - 10'd1) field_tg <= ~field_tg;
     end
 endmodule

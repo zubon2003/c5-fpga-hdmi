@@ -10,7 +10,8 @@
 Analog 5.8 GHz FPV video (FM, NTSC) received by an ESP32-C5 running
 [C5VRX](https://github.com/Twotoz/C5VRX), demodulated on a Sipeed
 **Tang Primer 25K** FPGA and shown in colour on an HDMI monitor at
-**1280×720p, ~60 Hz**.
+**1280×720p, ~60 Hz** (a 4:3 picture, 960×720 with black pillars, or
+stretched to 16:9).
 
 The C5VRX-5 firmware already puts the radio's raw 4-bit IQ samples
 (MODEM_DIAG Q4/I4) on eight GPIO pins. The FPGA taps those pins in
@@ -178,6 +179,7 @@ characters change settings at run time (they reset at power-off):
 | `a` / `z` | colour saturation +/− 0.25× |
 | `[` / `]` | hue −/+ 11.25° |
 | `m` | FM demodulator mode: 0 adjacent, 1 PLL fast (power-up), 2 PLL, 3 PLL slow |
+| `A` | picture 4:3 (960×720 with black pillars, power-up) / stretched to 16:9 |
 | `T` | status packet (sync, levels, colour lock, receiver channel) |
 | `C` `S` `B` `G` | logic-analyser captures (raw IQ, symbols, FM output, chroma) |
 

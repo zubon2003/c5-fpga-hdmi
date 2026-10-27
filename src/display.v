@@ -19,6 +19,8 @@
 // odd read (the picture moves one output pixel right, which is harmless).
 // Weights are sixths of a line, rounded to sixteenths.
 // C = U on even and V on odd stored pixels.
+// ar43 = 1 (4:3): 480 stored pixels on x 160..1119 (960 x 720), black
+// pillars either side; ar43 = 0: 640 stored pixels stretched to 1280.
 // RGB = Y + (1.125 V), Y - 0.39 U - 0.58 V, Y + 2 U (shift-add BT.601).
 //
 // Channel OSD: when the receiver link (c5_link.v) reports a new channel
@@ -41,6 +43,7 @@ module display (
     input  wire signed [13:0] sc_rd,
     input  wire               sc_trig,
     input  wire               pic_mode,
+    input  wire               ar43,
     input  wire               parity,
     input  wire               color_on,
     input  wire               v_inv,
@@ -115,8 +118,11 @@ module display (
             default: wb = 5'd13;
         endcase
     end
-    wire [10:0] px_ahead = {1'b0, x[10:1]} + 11'd1;
-    wire [9:0]  px_rd    = (px_ahead > 11'd639) ? 10'd639 : px_ahead[9:0];
+    // 160 is even, so the A / B and U / V parities of x stay the same.
+    wire [10:0] xp       = ar43 ? x - 11'd160 : x;
+    wire [10:0] px_last  = ar43 ? 11'd479 : 11'd639;
+    wire [10:0] px_ahead = {1'b0, xp[10:1]} + 11'd1;
+    wire [9:0]  px_rd    = (px_ahead > px_last) ? px_last[9:0] : px_ahead[9:0];
     wire [4:0]  slot = x[0] ? line_b[4:0] : line_a[4:0];
     always @(*) pic_addr = {slot, 9'd0} + {2'd0, slot, 7'd0} + {5'd0, px_rd};   // slot * 640 + px
 
@@ -164,10 +170,11 @@ module display (
     // ---- stage 1 ----
     reg [10:0] x1;
     reg [9:0]  y1;
-    reg        de1, hs1, vs1, sc1, grid1, led1, bar1, mark1, obox1, obit1;
+    reg        de1, hs1, vs1, sc1, grid1, led1, bar1, mark1, obox1, obit1, pil1;
     reg [3:0]  r1;
     always @(posedge clk) begin
         x1    <= x;
+        pil1  <= ar43 && ((x < 160) || (x >= 1120));
         y1    <= y;
         de1   <= de;
         hs1   <= hsync;
@@ -315,9 +322,10 @@ module display (
     function [7:0] clamp8(input signed [10:0] v);
         clamp8 = (v < 0) ? 8'd0 : (v > 11'sd255) ? 8'd255 : v[7:0];
     endfunction
-    reg        pm2, obox2, obit2;
+    reg        pm2, obox2, obit2, pil2;
     always @(posedge clk) begin
         pm2   <= pic_mode;
+        pil2  <= pil1;
         obox2 <= obox1;
         obit2 <= obit1;
         ty2   <= (t_s < 0) ? 10'd0 : (t_s > 16'sd479) ? 10'd479 : t_s[9:0];
@@ -345,6 +353,7 @@ module display (
         if (led2)                 rgb <= sc_trig ? 24'h20d040 : 24'hd03020;
         else if (obit2)           rgb <= 24'hffffff;
         else if (obox2)           rgb <= 24'h000000;
+        else if (pm2 && pil2)     rgb <= 24'h000000;
         else if (pm2)             rgb <= {clamp8(rr), clamp8(gg), clamp8(bb)};
         else if (sc2 && trace)    rgb <= 24'hf0f070;
         else if (sc2 && grid2)    rgb <= 24'h303840;

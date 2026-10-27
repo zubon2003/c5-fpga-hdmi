@@ -9,6 +9,7 @@ Window keys (sent to the FPGA as they are):
     f field offset direction           c colour on/off      v V sign
     a / z colour saturation +/- 0.25x  [ / ] hue -/+ 11.25 degrees
     m FM demodulator mode 0..3 (0 adjacent, 1 fast PLL, 2 PLL, 3 slow PLL)
+    A picture 4:3 (black pillars, power-up) / 16:9 stretch
     s save a snapshot now (captures/snap_<time>.png)         q quit
     r start / stop recording a video (captures/rec_<time>.mp4)
 
@@ -42,8 +43,9 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 CAP_DIR = os.path.join(ROOT, "captures")
 CMD_FILE = os.path.join(CAP_DIR, "viewer_cmd.txt")
 LOG_FILE = os.path.join(CAP_DIR, "viewer_log.txt")
-KEYS = "PWudhlfcvaz[]m"
-DEFAULTS = {"mode": "P", "first": 16, "act": 752, "f": 1, "c": 1, "v": 1, "sat": 4, "hue": 0, "fm": 1}   # as in src/top.v
+KEYS = "PWudhlfcvaz[]mA"
+DEFAULTS = {"mode": "P", "first": 16, "act": 752, "f": 1, "c": 1, "v": 1, "sat": 4, "hue": 0, "fm": 1,
+            "ar43": 1}   # as in src/top.v
 
 
 def write_png(path, rgb, w=W, h=H):
@@ -152,13 +154,15 @@ class Viewer:
                 s["hue"] = (s["hue"] + 1) % 32
             elif ch == "m":
                 s["fm"] = (s["fm"] + 1) % 4
+            elif ch == "A":
+                s["ar43"] ^= 1
         self.log(f"sent {chars!r} -> {self.describe()}")
 
     def describe(self):
         s = self.settings
         return (f"mode {s['mode']}  first line {s['first']}  start {s['act'] / 80:.2f} us  "
                 f"field flip {s['f']}  colour {s['c']}  V inv {s['v']}  sat {s['sat'] / 4:.2f}x  hue {s['hue'] * 11.25:+.1f} deg  "
-                f"FM {('adjacent', 'PLL fast', 'PLL', 'PLL slow')[s['fm']]}")
+                f"FM {('adjacent', 'PLL fast', 'PLL', 'PLL slow')[s['fm']]}  {'4:3' if s['ar43'] else '16:9'}")
 
     def capture(self, mode, path):
         with self.ser_lock:

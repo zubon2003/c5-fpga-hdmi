@@ -8,7 +8,8 @@
 //   'u' / 'd' first active line -/+ 1, 'h' / 'l' picture start -/+ 16 samples
 //   (0.2 us), 'f' field offset direction, 'c' colour on/off, 'v' V sign,
 //   'a' / 'z' colour saturation +/- 0.25x, '[' / ']' hue -/+ 11.25 degrees,
-//   'm' FM demodulator mode 0..3 (src/fm_demod.v; 1 at power-up)
+//   'm' FM demodulator mode 0..3 (src/fm_demod.v; 1 at power-up),
+//   'A' picture 4:3 (960 x 720 with black pillars, power-up) / 16:9 stretch
 module top (
     input  wire       clk,          // 50 MHz
     output wire       led,
@@ -120,6 +121,7 @@ module top (
     reg        v_inv       = 1'b1;     // natural hues on the board (skin, yellow box)
     reg [3:0]  sat         = 4'd4;     // 1x
     reg [4:0]  hue         = 5'd0;
+    reg        ar43        = 1'b1;
     always @(posedge clk_iq) if (rx_valid) begin
         case (rx_data)
             "P": pic_mode_iq <= 1'b1;
@@ -136,6 +138,7 @@ module top (
             "[": hue <= hue - 5'd1;
             "]": hue <= hue + 5'd1;
             "m": fm_mode <= fm_mode + 2'd1;
+            "A": ar43    <= ~ar43;
             default: ;
         endcase
     end
@@ -147,7 +150,7 @@ module top (
     wire [15:0] real_lines, field_lines;
     video_in u_vin (
         .clk(clk_iq), .rst(rst_iq), .in_valid(fm_valid), .vid(fm_vid), .d(fm_d),
-        .first(first_line), .act(act_start),
+        .first(first_line), .act(act_start), .ar43(ar43),
         .we(lb_we), .waddr(lb_waddr), .wdata(lb_wdata),
         .field_tg(field_tg), .parity(field_parity), .field_real(field_real),
         .real_lines(real_lines), .field_lines(field_lines), .status(vin_status), .jumps(out_jumps),
@@ -163,7 +166,7 @@ module top (
     // (blackouts in flight, 2026-10-22).
     reg [2:0] field_s;
     reg [1:0] freal_s;
-    reg [1:0] parity_s, mode_s, color_s, vinv_s;
+    reg [1:0] parity_s, mode_s, color_s, vinv_s, ar43_s;
     reg [3:0] sat_s1, sat_s2;
     reg [4:0] hue_s1, hue_s2;
     always @(posedge clk_pixel) begin
@@ -173,6 +176,7 @@ module top (
         mode_s   <= {mode_s[0], pic_mode_iq};
         color_s  <= {color_s[0], color_on};
         vinv_s   <= {vinv_s[0], v_inv};
+        ar43_s   <= {ar43_s[0], ar43};
         sat_s1   <= sat;
         sat_s2   <= sat_s1;
         hue_s1   <= hue;
@@ -211,7 +215,7 @@ module top (
         .clk(clk_pixel), .x(x), .y(y), .de(de), .hsync(hsync), .vsync(vsync),
         .line_start(line_start), .activity(activity), .early_cnt(early_cnt),
         .late_cnt(late_cnt), .sc_rd(sc_rd), .sc_trig(sc_trig),
-        .pic_mode(mode_s[1]), .parity(parity_s[1]), .color_on(color_s[1]), .v_inv(vinv_s[1]), .sat(sat_s2), .hue(hue_s2),
+        .pic_mode(mode_s[1]), .ar43(ar43_s[1]), .parity(parity_s[1]), .color_on(color_s[1]), .v_inv(vinv_s[1]), .sat(sat_s2), .hue(hue_s2),
         .osd_name(ch_name),
         .pic_addr(pic_addr), .pic(pic),
         .rgb(rgb), .de_o(de_d), .hsync_o(hsync_d), .vsync_o(vsync_d)
