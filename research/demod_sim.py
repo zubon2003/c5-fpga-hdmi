@@ -16,9 +16,18 @@ same 22-sample boxcar as src/fm_demod.v; the luma SINAD is measured
 against the noise-free source through that boxcar (least-squares lag,
 gain and offset, picture region only). Synthetic numbers, not measured
 range: 1 dB of C/N is 1.12x the free-space distance.
+
+--p64 <C5VRX>/main/p64_tables.h adds the C5's own demodulator, U80P64-R1
+(C5VRX-5 v5.0.523, read from that checkout, not copied here): one update
+per pair of 40 MS/s samples (every 4th symbol here), token = the 16-sector
+phase of the pair's first sample (the table's bits 12..15 at the IQ
+address), then code and next state from the (state, token) word; codes
+0..63 span -6..+9 MHz. Its 20 MS/s codes are held for 4 symbols and go
+through the same boxcar.
 """
 import argparse
 import os
+import re
 import sys
 
 import numpy as np
@@ -258,6 +267,31 @@ def d_pll_fixed_delay(sym_ph, p2, kp_sh, kp_add, ki_sh, delay, pow2=0):
     return out * (2 * np.pi / 65536)
 
 
+def load_p64(path):
+    """The 1024-word U80P64-R1 table from C5VRX's main/p64_tables.h."""
+    text = open(path, encoding="utf-8").read().split("p64_table[1024] = {", 1)[1].split("}", 1)[0]
+    lut = np.array([int(v, 16) for v in re.findall(r"0x[0-9a-fA-F]+", text)], np.int64)
+    assert len(lut) == 1024, path
+    return lut
+
+
+@njit(cache=True)
+def d_p64(sym, lut):
+    lo = 2 * np.pi * -6.0e6 / F
+    span = 2 * np.pi * 15.0e6 / F
+    out = np.zeros(len(sym))
+    s = 0
+    for n in range(0, len(sym) - 3, 4):
+        b = sym[n]
+        tok = (lut[(b >> 4) | ((b & 15) << 4)] >> 12) & 15
+        w = lut[(s << 4) | tok]
+        s = (w >> 6) & 63
+        d = lo + (w & 63) * span / 63
+        for k in range(4):
+            out[n + k] = d
+    return out
+
+
 @njit(cache=True)
 def iir(d, kp):
     """One-pole low-pass y += kp (x - y): what a first-order tracker is
@@ -299,8 +333,8 @@ def sinad(vid, ire, region, burn=6000):
     return 10 * np.log10(np.var(t) / err)
 
 
-def demods(full=False):
-    """Candidates; each takes c = (phase rad, |z|^2, 10-bit phase)."""
+def demods(full=False, p64=None):
+    """Candidates; each takes c = (phase rad, |z|^2, 10-bit phase, symbol)."""
     out = {"current": lambda c: d_adjacent(c[0]),
            "lin 0.5": lambda c: iir(d_adjacent(c[0]), 0.5)}
     if full:
@@ -318,6 +352,8 @@ def demods(full=False):
     out["fix 1/4,1/64"] = lambda c: d_pll_fixed(c[2], c[1], 2, 0, 6)
     out["fix 3/8,1/32"] = lambda c: d_pll_fixed(c[2], c[1], 2, 3, 5)
     out["fix 1/8,1/128"] = lambda c: d_pll_fixed(c[2], c[1], 3, 0, 7)
+    if p64 is not None:
+        out["C5 U80P64-R1"] = lambda c: d_p64(c[3], p64)
     return out
 
 
@@ -404,10 +440,11 @@ def main():
     ap.add_argument("--cnr", default="-4:21:1")
     ap.add_argument("--offset", type=float, default=0.0, help="residual AFC error, MHz")
     ap.add_argument("--full", action="store_true", help="also the rejected candidates")
+    ap.add_argument("--p64", help="C5VRX main/p64_tables.h: also the C5's U80P64-R1")
     args = ap.parse_args()
     a, b, s = (float(x) for x in args.cnr.split(":"))
     cnrs = np.append(np.arange(a, b, s), 40.0)    # 40 dB: sharpness (distortion floor)
-    ds = demods(args.full)
+    ds = demods(args.full, load_p64(args.p64) if args.p64 else None)
     table = {name: [] for name in ds}
     hits = {name: [] for name in ds}
     jit = {name: [] for name in ds}
@@ -416,7 +453,7 @@ def main():
         for seed in range(args.seeds):
             sym, ire, region = make_case(seed, c, args.dev, args.filter, offset_hz=args.offset * 1e6)
             ph, p2 = cells(sym)
-            cc = (ph, p2, LUT10[sym])
+            cc = (ph, p2, LUT10[sym], sym)
             for name, fn in ds.items():
                 vid = boxcar(fn(cc))
                 h, j = sync_stats(vid, ire, region)
