@@ -1,0 +1,215 @@
+From a9d865c16f2500bd96e05bccd79e38f062f0e691 Mon Sep 17 00:00:00 2001
+From: zubon2003 <zubon2003@gmail.com>
+Date: Tue, 27 Oct 2026 22:03:43 +0900
+Subject: [PATCH] c5-fpga-hdmi UART link build (not an official C5VRX release)
+
+Modification of C5VRX-5 v5.0.523 (96995500) for the c5-fpga-hdmi FPGA
+receiver, which takes the MODEM_DIAG IQ and does not use the analog
+output:
+
+- IQ pins back on the header as in v5.0.387: Q sign on D3/GPIO7 and
+  I bit 0 on D10/GPIO10 instead of GPIO2 and the user-LED GPIO27 (#263),
+  so the FPGA wiring stays the same.
+- UART1 at 115200 8N1 on XIAO D4 = GPIO23 (TX) and D5 = GPIO24 (RX), the
+  two DAC LSB pins, which are no longer driven. Only the keys b (next
+  band), c (next channel), s (scan) and ? (report now) are taken from it;
+  it answers "CH <name> <MHz>" + CR LF on every channel change and once a
+  second.
+- Internal RAM is nearly full on this release: a link task made the gain
+  observer's xTaskCreate fail at boot (ESP_ERR_NO_MEM). The link has no
+  task of its own (the console task polls it), keeps only the minimum RX
+  ring and no TX ring, and starts after the receiver tasks.
+
+C5VRX by Twotoz and the C5VRX contributors, GPL-3.0-only.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ main/CMakeLists.txt |  2 +-
+ main/console.c      | 75 +++++++++++++++++++++++++++++++++++++++++++++
+ main/main.c         |  1 +
+ main/receiver.h     |  3 ++
+ main/rf.h           |  7 +++--
+ main/transport.c    |  8 +++--
+ 6 files changed, 91 insertions(+), 5 deletions(-)
+
+diff --git a/main/CMakeLists.txt b/main/CMakeLists.txt
+index d6f5223e..e657e3e6 100644
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -5,7 +5,7 @@ idf_component_register(
+         "settings.c" "console.c" "profile.c" "diag.c" "flightlog.c" "sense_lab.c"
+     INCLUDE_DIRS "."
+     REQUIRES esp_wifi esp_phy nvs_flash esp_event esp_netif esp_driver_parlio
+-             esp_driver_gpio esp_driver_bitscrambler esp_driver_usb_serial_jtag
++             esp_driver_gpio esp_driver_bitscrambler esp_driver_usb_serial_jtag esp_driver_uart
+              esp_driver_tsens esp_timer esp_mm hal heap esp_hw_support esp_app_format esp_partition)
+ 
+ target_bitscrambler_add_src("p64.bsasm")
+diff --git a/main/console.c b/main/console.c
+index 7fcf32c5..97ea1248 100644
+--- a/main/console.c
++++ b/main/console.c
+@@ -9,6 +9,7 @@
+ #include "esp_timer.h"
+ #include "freertos/queue.h"
+ #include "hal/usb_serial_jtag_ll.h"
++#include "driver/uart.h"
+ #include "rf.h"
+ #include "snapshot.h"
+ 
+@@ -131,6 +132,74 @@ static void usb_reader_task(void *arg)
+     }
+ }
+ 
++/* c5-fpga-hdmi UART link (modification, not an official C5VRX release):
++ * UART1 at 115200 8N1 on XIAO D4 = GPIO23 (TX to the FPGA) and D5 =
++ * GPIO24 (RX from the FPGA), the pins the two DAC LSBs used (transport.c).
++ * The FPGA's buttons send console keys; only b (next band), c (next
++ * channel), s (scan) and ? (report now) are taken, so nothing on this
++ * wire can reboot, calibrate or change saved settings. The receiver
++ * answers "CH <name> <MHz>\r\n" when the channel changes, on ? and once a
++ * second (for the FPGA's on-screen display).
++ * Internal RAM is nearly full on v5.0.523 (a link task made the gain
++ * observer's xTaskCreate fail at boot), so the link starts only after the
++ * receiver tasks (main.c) and has no task of its own: the console task
++ * polls it, and the driver keeps only the minimum
++ * RX ring and no TX ring (a report fits the 128-byte hardware FIFO). */
++#define LINK_UART UART_NUM_1
++#define LINK_TX   23
++#define LINK_RX   24
++#define LINK_RX_RING (SOC_UART_FIFO_LEN + 16)
++
++static bool s_link_up;
++
++static void link_report(void)
++{
++    const fpv_channel_t *ch = rf_channel();
++    char line[32];
++    int n = snprintf(line, sizeof(line), "CH %s %u\r\n", ch ? ch->name : "--", (unsigned)rf_frequency_mhz());
++    if (n > 0) uart_write_bytes(LINK_UART, line, (size_t)n);
++}
++
++/* Called from the console task at least every 100 ms. */
++static void link_poll(void)
++{
++    static size_t last_index = (size_t)-1;
++    static int64_t last_report;
++    if (!s_link_up) return;
++    uint8_t buf[16];
++    int got = uart_read_bytes(LINK_UART, buf, sizeof(buf), 0);
++    bool now = false;
++    for (int k = 0; k < got; ++k) {
++        uint8_t c = buf[k];
++        if (c == 'b' || c == 'c' || c == 's') (void)xQueueSend(s_keys, &c, 0);
++        else if (c == '?') now = true;
++    }
++    size_t index = rf_channel_index();
++    int64_t t = esp_timer_get_time();
++    if (now || index != last_index || t - last_report >= 1000000) {
++        last_index = index;
++        last_report = t;
++        link_report();
++    }
++}
++
++static void link_start(void)
++{
++    const uart_config_t cfg = {
++        .baud_rate = 115200,
++        .data_bits = UART_DATA_8_BITS,
++        .parity = UART_PARITY_DISABLE,
++        .stop_bits = UART_STOP_BITS_1,
++        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
++        .source_clk = UART_SCLK_DEFAULT,
++    };
++    esp_err_t err = uart_driver_install(LINK_UART, LINK_RX_RING, 0, 0, NULL, 0);
++    if (err == ESP_OK) err = uart_param_config(LINK_UART, &cfg);
++    if (err == ESP_OK) err = uart_set_pin(LINK_UART, LINK_TX, LINK_RX, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
++    s_link_up = err == ESP_OK;
++    printf("FPGA_LINK uart=1 tx=%d rx=%d baud=115200 %s\n", LINK_TX, LINK_RX, err == ESP_OK ? "ok" : esp_err_to_name(err));
++}
++
+ static void console_task(void *arg)
+ {
+     (void)arg;
+@@ -169,6 +238,7 @@ static void console_task(void *arg)
+             }
+         }
+         diag_poll();
++        link_poll();
+         /* Status beat for the web menu: it updates without a T request. */
+         static int64_t status_beat;
+         if (esp_timer_get_time() - status_beat >= 2000000) {
+@@ -187,3 +257,8 @@ void console_start(void)
+                     ESP_ERR_NO_MEM);
+ }
+ 
++void console_link_start(void)
++{
++    link_start();   /* never fatal: the receiver runs without the FPGA link */
++}
++
+diff --git a/main/main.c b/main/main.c
+index df05f024..7634aeec 100644
+--- a/main/main.c
++++ b/main/main.c
+@@ -95,4 +95,5 @@ void app_main(void)
+     printf("C5VRX5 %s ready: %s %u MHz, %s, ultrafine IQ, KEEL-1 ('h' for keys) fw=%s\n",
+            esp_app_get_description()->version, rf_channel()->name, rf_frequency_mhz(),
+            transport_program_name(), firmware_id());
++    console_link_start();
+ }
+diff --git a/main/receiver.h b/main/receiver.h
+index cf0969a4..132ae0c4 100644
+--- a/main/receiver.h
++++ b/main/receiver.h
+@@ -301,6 +301,9 @@ bool blob_store(const char *key, const void *data, size_t size);
+ 
+ /* ---- console.c ---- */
+ void console_start(void);
++/* c5-fpga-hdmi UART build: start the FPGA link once the receiver tasks
++ * exist, so its driver allocations stay out of the boot-time heap peak. */
++void console_link_start(void);
+ const char *firmware_id(void);   /* "<version>+<commit 12>", the fw= field of log lines */
+ void firmware_print(void);       /* FIRMWARE line: version, full commit, ELF SHA-256, build time */
+ 
+diff --git a/main/rf.h b/main/rf.h
+index 54511e85..8d7e48cc 100644
+--- a/main/rf.h
++++ b/main/rf.h
+@@ -16,8 +16,11 @@
+  * IQ-owned and cannot export the optional sample clock (PR #257).
+  * GPIO27 is exclusively IQ-owned: do not drive it as a status LED. The LED/resistor remains connected; 40 MS/s capture and
+  * sampling-phase margin on an unmodified XIAO still need board validation.
+- * These are GPIO-matrix loopbacks; no external IQ wiring is required. */
+-#define RF_IQ_GPIO_NUMS {1, 0, 25, 2, 27, 5, 3, 4}
++ * These are GPIO-matrix loopbacks; no external IQ wiring is required.
++ * c5-fpga-hdmi UART build (modification, not an official C5VRX release):
++ * the FPGA is wired to the earlier header pins, so Q's sign bit stays on
++ * D3/GPIO7 and I's low bit on D10/GPIO10 (as in v5.0.387). */
++#define RF_IQ_GPIO_NUMS {1, 0, 25, 7, 10, 5, 3, 4}
+ 
+ esp_err_t rf_start(void);
+ /* Stop the dump writer and Wi-Fi, request a USB download boot and restart,
+diff --git a/main/transport.c b/main/transport.c
+index 5ccd0ec6..2c4498ff 100644
+--- a/main/transport.c
++++ b/main/transport.c
+@@ -45,8 +45,12 @@ static const void *tracker_program(void) { return s_p64; }
+ /* 6-bit resistor DAC, LSB first (XIAO D4..D9; 8.2k/3.9k/2k/1k/470R/240R
+  * plus 200R). Do not change the tested pin order. D10/GPIO10 and D3/GPIO7
+  * are reserved for future seventh/eighth branches; keep them disconnected
+- * here until a complete wider-DAC implementation is hardware-validated. */
+-static const int s_dac_gpio[8] = {23, 24, 11, 12, 8, 9, -1, -1};
++ * here until a complete wider-DAC implementation is hardware-validated.
++ * c5-fpga-hdmi UART build (modification, not an official C5VRX release):
++ * D4 (GPIO23) and D5 (GPIO24) carry the UART link to the FPGA instead
++ * (console.c), so the two DAC LSBs are not driven; the FPGA takes the IQ
++ * from MODEM_DIAG and does not use this analog output. */
++static const int s_dac_gpio[8] = {-1, -1, 11, 12, 8, 9, -1, -1};
+ 
+ DMA_ATTR __attribute__((aligned(64))) uint8_t s_raw_ring[RAW_RING_BYTES];
+ static parlio_rx_unit_handle_t s_rx;
+-- 
+2.45.2.windows.1
+

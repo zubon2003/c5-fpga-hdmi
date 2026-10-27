@@ -53,18 +53,26 @@ Tested with the official **C5VRX-5 release `c5vrx5-v5.0.332`**
 (commit `24da232`), unmodified, flashed from the
 [C5VRX web flasher](https://twotoz.github.io/C5VRX/) / GitHub release.
 The IQ GPIO mapping below is the one in that version (also identical in
-v5.0.322). Later versions may change it; check `s_iq_pins` and
-`s_lane_diag` in C5VRX's `main/rf.c`. Set the channel on the C5 as usual
-(BOOT button menu or USB console) and let its startup calibration finish.
+v5.0.322). Later versions may change it; check `RF_IQ_GPIO_NUMS` in
+C5VRX's `main/rf.h` (`s_iq_pins` in `main/rf.c` before v5.0.482). Set the
+channel on the C5 as usual (BOOT button menu or USB console) and let its
+startup calibration finish.
+
+**Official releases from `c5vrx5-v5.0.482` on do not work with this
+wiring.** C5VRX PR #263 moved Q sign from D3/GPIO7 to GPIO2 (MTMS) and
+I bit 0 from D10/GPIO10 to the user-LED GPIO27, which is not on a pad.
+Official releases up to `c5vrx5-v5.0.464` keep the old pins (only
+v5.0.332 is tested unmodified here); the modified v5.0.523 in
+[firmware/](firmware/README.md) puts both bits back.
 
 ### Optional: band / channel buttons on the Dock
 
 To step the band and channel with the Dock's buttons and see the channel
-on screen, the C5 needs a modified C5VRX-5 v5.0.387 with a UART on its
-two DAC LSB pins: [firmware/](firmware/README.md) has the patch and the
-build steps. It is not an official C5VRX release; the C5's own analog
-video output and its sync flywheel are off in it. Everything else here
-works with the official firmware.
+on screen, the C5 needs a modified C5VRX-5 with a UART on its two DAC LSB
+pins: [firmware/](firmware/README.md) has the patches (v5.0.523, tested
+2026-10-27; the older v5.0.387 one) and the build steps. It is not an
+official C5VRX release; the C5's own analog video output is off in it.
+Everything else here works with the official firmware up to v5.0.464.
 
 ## Wiring (XIAO ESP32-C5 → Tang Primer 25K Dock J4)
 
@@ -85,7 +93,7 @@ column odd pins). Find pin 1 with a meter (+3.3 V) before wiring.
    MTDO (GPIO5)  ── I bit 1 ───────────── 10
    MTDI (GPIO3)  ── I bit 2 ───────────── 11
    MTCK (GPIO4)  ── I sign  ───────────── 12
-   MTMS (GPIO2)  ── do NOT connect (C5VRX-5 sync flywheel output)
+   MTMS (GPIO2)  ── do NOT connect (driven by official C5VRX-5 firmware)
 ```
 
 | J4 pin | FPGA ball | `iq[n]` | Signal | XIAO pin | ESP32-C5 GPIO |
@@ -248,8 +256,11 @@ tracker and kp ladder, `main/u85q.bsasm`, `main/kp_ladder.h` and
 second-order loop, an amplitude-gated correction and seamless mode
 switching, with the signal and channel model of the C5VRX-5 range
 simulator `research/sim.py` followed in `research/demod_sim.py`) from
-[C5VRX], and `firmware/c5vrx5-v5.0.387-fpga-link.patch` modifies C5VRX-5
-v5.0.387 (commit `2f1a1252`; `main/console.c`, `main/transport.c`,
+[C5VRX], and `firmware/c5vrx5-v5.0.523-fpga-link.patch` and
+`firmware/c5vrx5-v5.0.387-fpga-link.patch` modify C5VRX-5 v5.0.523
+(commit `96995500`; `main/console.c`, `main/main.c`, `main/receiver.h`,
+`main/rf.h`, `main/transport.c`, `main/CMakeLists.txt`) and v5.0.387
+(commit `2f1a1252`; `main/console.c`, `main/transport.c`,
 `main/CMakeLists.txt`) for the optional receiver link, from
 [C5VRX](https://github.com/Twotoz/C5VRX) by Twotoz and the C5VRX
 contributors. Visit the [official C5VRX website](https://twotoz.github.io/C5VRX/)

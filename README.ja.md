@@ -53,17 +53,26 @@ C5VRX-5 の公式リリース **`c5vrx5-v5.0.332`**（commit `24da232`）を、�
 使って確認しました。[C5VRX の Web フラッシャー](https://twotoz.github.io/C5VRX/)
 または GitHub のリリースから書き込めます。下の IQ の GPIO の割り当ては、
 このバージョンのものです（v5.0.322 も同じでした）。今後のバージョンで変わる
-可能性があるので、C5VRX の `main/rf.c` にある `s_iq_pins` と `s_lane_diag` を
-確認してください。チャンネルは、いつもどおり C5 側（BOOT ボタンのメニューか
-USB コンソール）で合わせ、起動時の校正が終わるのを待ってください。
+可能性があるので、C5VRX の `main/rf.h` にある `RF_IQ_GPIO_NUMS`（v5.0.482 より
+前は `main/rf.c` の `s_iq_pins`）を確認してください。チャンネルは、いつもどおり
+C5 側（BOOT ボタンのメニューか USB コンソール）で合わせ、起動時の校正が
+終わるのを待ってください。
+
+**公式リリースの `c5vrx5-v5.0.482` 以降は、この結線では動きません。**
+C5VRX の PR #263 で、Q 符号が D3/GPIO7 から GPIO2（MTMS）に、I bit 0 が
+D10/GPIO10 からユーザー LED の GPIO27（パッドに出ていません）に移りました。
+`c5vrx5-v5.0.464` までの公式リリースは元のピンのままです（改変なしで確認したのは
+v5.0.332 だけです）。[firmware/](firmware/README.md) の改変版 v5.0.523 は、
+両方のビットを元に戻しています。
 
 ### 任意: Dock のボタンでバンド / チャンネルを切り替える
 
 Dock のボタンでバンドとチャンネルを切り替え、画面にチャンネルを表示するには、
-DAC の下位 2 ピンに UART を足した、改変版の C5VRX-5 v5.0.387 が必要です。
-パッチとビルド手順は [firmware/](firmware/README.md) にあります。C5VRX の公式
-リリースではありません。この版では、C5 自身のアナログ映像出力と同期
-フライホイールは止まります。それ以外の機能は、公式のファームウェアで動きます。
+DAC の下位 2 ピンに UART を足した、改変版の C5VRX-5 が必要です。パッチ
+（2026-10-27 に確認した v5.0.523 用と、以前の v5.0.387 用）とビルド手順は
+[firmware/](firmware/README.md) にあります。C5VRX の公式リリースでは
+ありません。この版では、C5 自身のアナログ映像出力は止まります。それ以外の
+機能は、v5.0.464 までの公式のファームウェアで動きます。
 
 ## 結線（XIAO ESP32-C5 → Tang Primer 25K Dock J4）
 
@@ -84,7 +93,7 @@ Dock の PMOD J4 のピン番号は、Dock の回路図どおりです。1/2 番
    MTDO (GPIO5)  ── I bit 1 ───────────── 10
    MTDI (GPIO3)  ── I bit 2 ───────────── 11
    MTCK (GPIO4)  ── I 符号  ───────────── 12
-   MTMS (GPIO2)  ── 接続しない（C5VRX-5 の同期フライホイールの出力）
+   MTMS (GPIO2)  ── 接続しない（公式の C5VRX-5 ファームウェアが駆動）
 ```
 
 | J4 ピン | FPGA のピン | `iq[n]` | 信号 | XIAO のピン | ESP32-C5 の GPIO |
@@ -248,8 +257,11 @@ kp ラダー、`main/u85q.bsasm`、`main/kp_ladder.h`、`research/README.md`。�
 `src/fm_demod.v` で 2 次ループ、振幅で絞る補正、途切れないモード切り替えを加えて
 います。`research/demod_sim.py` の信号とチャネルのモデルは C5VRX-5 の距離
 シミュレータ `research/sim.py` に沿っています）を取り入れています。
-また、`firmware/c5vrx5-v5.0.387-fpga-link.patch` は、任意の受信機リンクのために
-C5VRX-5 v5.0.387（commit `2f1a1252`。`main/console.c`、`main/transport.c`、
+また、`firmware/c5vrx5-v5.0.523-fpga-link.patch` と
+`firmware/c5vrx5-v5.0.387-fpga-link.patch` は、任意の受信機リンクのために
+C5VRX-5 v5.0.523（commit `96995500`。`main/console.c`、`main/main.c`、
+`main/receiver.h`、`main/rf.h`、`main/transport.c`、`main/CMakeLists.txt`）と
+v5.0.387（commit `2f1a1252`。`main/console.c`、`main/transport.c`、
 `main/CMakeLists.txt`）を改変するものです。
 元のプロジェクトと Discord への招待は
 [C5VRX 公式サイト](https://twotoz.github.io/C5VRX/) にあります。適用される
