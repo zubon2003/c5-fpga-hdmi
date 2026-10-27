@@ -20,6 +20,8 @@ ESP32-C5 が行います。v5.0.464 までの公式リリースは改変なし�
 それより後の版では IQ のピンが 2 本移ったので、[firmware/](firmware/README.md)
 に v5.0.523 用のパッチを用意しています（[C5VRX のバージョン](#c5vrx-のバージョン)を参照）。
 
+> 2台の XIAO ESP32-C5 を使うダイバーシティ版（開発中、実機未確認）は [dual/](dual/README.md) にあります。
+
 ## 由来
 
 - **[fpvdec / 5G8atv-rf-hackrf-decoder](https://github.com/zubon2003/5G8atv-rf-hackrf-decoder)**

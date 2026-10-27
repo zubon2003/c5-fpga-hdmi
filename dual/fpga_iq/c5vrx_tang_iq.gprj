@@ -1,0 +1,24 @@
+<?xml version="1" encoding="UTF-8"?>
+<!DOCTYPE gowin-fpga-project>
+<Project>
+    <Template>FPGA</Template>
+    <Version>5</Version>
+    <Device name="GW5A-25A" pn="GW5A-LV25MG121NES">gw5a25a-000</Device>
+    <FileList>
+        <File path="src/c5vrx_tang_iq_top.v" type="file.verilog" enable="1"/>
+        <File path="src/gowin_pll.v" type="file.verilog" enable="1"/>
+        <File path="src/c5vrx_core_iq.v" type="file.verilog" enable="1"/>
+        <File path="src/iq_os_rx.v" type="file.verilog" enable="1"/>
+        <File path="src/iq_phase_lut.v" type="file.verilog" enable="1"/>
+        <File path="src/fm_demod.v" type="file.verilog" enable="1"/>
+        <File path="src/link_rx.v" type="file.verilog" enable="1"/>
+        <File path="src/cvbs_decode_fm.v" type="file.verilog" enable="1"/>
+        <File path="src/chan_buf.v" type="file.verilog" enable="1"/>
+        <File path="src/sdram_fb.v" type="file.verilog" enable="1"/>
+        <File path="src/display.v" type="file.verilog" enable="1"/>
+        <File path="src/tmds_enc.v" type="file.verilog" enable="1"/>
+        <File path="src/button.v" type="file.verilog" enable="1"/>
+        <File path="src/c5vrx_tang_iq.cst" type="file.cst" enable="1"/>
+        <File path="src/c5vrx_tang_iq.sdc" type="file.sdc" enable="1"/>
+    </FileList>
+</Project>

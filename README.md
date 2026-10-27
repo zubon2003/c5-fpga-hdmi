@@ -20,6 +20,8 @@ channel selection. Official releases up to v5.0.464 work unmodified;
 later ones moved two IQ pins, and [firmware/](firmware/README.md) has a
 patched v5.0.523 (see [C5VRX version](#c5vrx-version)).
 
+> A two-receiver diversity version (work in progress, not yet tested on hardware; Japanese docs) is in [dual/](dual/README.md).
+
 ## Origins
 
 - **[fpvdec / 5G8atv-rf-hackrf-decoder](https://github.com/zubon2003/5G8atv-rf-hackrf-decoder)**

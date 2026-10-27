@@ -1,0 +1,212 @@
+diff --git a/v5/main/CMakeLists.txt b/v5/main/CMakeLists.txt
+index 9d08b0a..114d8ff 100644
+--- a/v5/main/CMakeLists.txt
++++ b/v5/main/CMakeLists.txt
+@@ -2,10 +2,11 @@ idf_component_register(
+     SRCS
+         "main.c" "rf.c" "phy.c" "arc_phy.c" "transport.c" "gain.c" "receiver.c"
+         "control.c" "calibration.c" "menu.c" "menu_raster.c" "analog_video_detect.c"
+-        "settings.c" "console.c"
++        "settings.c" "console.c" "tang_link.c"
+     INCLUDE_DIRS "."
+     REQUIRES esp_wifi esp_phy nvs_flash esp_event esp_netif esp_driver_parlio
+              esp_driver_gpio esp_driver_bitscrambler esp_driver_usb_serial_jtag
++             esp_driver_uart
+              esp_driver_tsens esp_timer esp_mm hal heap esp_hw_support esp_app_format)
+ 
+ target_bitscrambler_add_src("u85q.bsasm")
+diff --git a/v5/main/main.c b/v5/main/main.c
+index ac4d6fb..cf42eb3 100644
+--- a/v5/main/main.c
++++ b/v5/main/main.c
+@@ -7,6 +7,7 @@
+ #include "driver/usb_serial_jtag_vfs.h"
+ #include "esp_app_desc.h"
+ #include "rf.h"
++#include "tang_link.h"
+ 
+ volatile const char *s_boot_stage = "start";
+ 
+@@ -34,6 +35,7 @@ void app_main(void)
+     s_boot_stage = "tasks";
+     receiver_start();
+     control_start();
++    tang_link_start();
+     s_boot_stage = "ready";
+     printf("C5VRX5 %s ready: %s %u MHz, U85Q, ultrafine IQ, Direct Gain V5 ('h' for keys)\n",
+            esp_app_get_description()->version, rf_channel()->name, rf_frequency_mhz());
+diff --git a/v5/main/rf.c b/v5/main/rf.c
+index dcd9cc0..9dde720 100644
+--- a/v5/main/rf.c
++++ b/v5/main/rf.c
+@@ -3,6 +3,7 @@
+  * adaptive-lane paths removed. */
+ #include "rf.h"
+ #include "phy.h"
++#include "tang_link.h"
+ #include <stdio.h>
+ #include <string.h>
+ #include "driver/gpio.h"
+@@ -42,10 +43,8 @@
+ static const char *TAG = "c5vrx5_rf";
+ 
+ /* PARLIO RX data pins, in data-bit order: Q on bits 0..3, I on 4..7. */
+-static const gpio_num_t s_iq_pins[8] = {
+-    GPIO_NUM_1, GPIO_NUM_0, GPIO_NUM_25, GPIO_NUM_7,
+-    GPIO_NUM_10, GPIO_NUM_5, GPIO_NUM_3, GPIO_NUM_4,
+-};
++/* Tang IQ build: all eight on XIAO edge pins (tang_link.h). */
++static const gpio_num_t s_iq_pins[8] = TANG_IQ_GPIOS;
+ /* Ultrafine lane: sign bit 9 plus ADC bits 6..4, i.e. 16-code steps in a
+  * +-128 window (+12 dB over the coarse {9,8,7,6} slice, an exact
+  * power-of-two scale inside the window). Q on DIAG[4,5,6,9], I on
+@@ -230,6 +229,7 @@ bool rf_set_gain(uint8_t gain, uint32_t expected_generation)
+     s_gain = gain;
+     if (s_post_gain_hook) s_post_gain_hook(gain);
+     phy_end_actuator();
++    tang_link_kick();
+     return true;
+ }
+ 
+@@ -241,6 +241,7 @@ void rf_force_gain(uint8_t gain)
+     s_gain = gain;
+     if (s_post_gain_hook) s_post_gain_hook(gain);
+     phy_end();
++    tang_link_kick();
+ }
+ 
+ uint8_t rf_gain(void) { return s_gain; }
+diff --git a/v5/main/tang_link.c b/v5/main/tang_link.c
+new file mode 100644
+index 0000000..bc69651
+--- /dev/null
++++ b/v5/main/tang_link.c
+@@ -0,0 +1,71 @@
++/* C5VRX-5 Tang IQ link: receiver state packets for the FPGA (link_rx.v).
++ *
++ *   0 0xC5  1 seq  2 gain index  3 flags  4 channel  5 AFC offset (25 kHz)
++ *   6 signal strength 0..100  7 check (bytes 0..7 sum to 0)
++ *   flags: [1:0] IQ lane (2 = ultrafine, fixed in C5VRX-5) [2] carrier
++ *          [3] AFC locked [4] video seen in the last 200 ms [5] PAL
++ *
++ * A packet goes out after every gain write and at least every 2 ms. */
++#include "tang_link.h"
++#include "receiver.h"
++#include "rf.h"
++#include "driver/uart.h"
++#include "esp_timer.h"
++#include "freertos/FreeRTOS.h"
++#include "freertos/task.h"
++
++#define LINK_UART UART_NUM_1
++
++static TaskHandle_t s_task;
++static uint8_t s_seq;
++
++static void send_packet(void)
++{
++    int off = rf_offset_khz() / 25;
++    off = off < -128 ? -128 : off > 127 ? 127 : off;
++    int strength = s_signal_strength;
++    strength = strength < 0 ? 0 : strength > 100 ? 100 : strength;
++    bool video = esp_timer_get_time() - s_last_video_us < 200000;
++    uint8_t p[8] = {
++        0xC5, s_seq++, rf_gain(),
++        (uint8_t)(2u | (strength > 0 ? 4u : 0u) | (s_afc_locked ? 8u : 0u) |
++                  (video ? 16u : 0u) | (s_detected_std == VIDEO_STD_PAL ? 32u : 0u)),
++        (uint8_t)rf_channel_index(), (uint8_t)(int8_t)off, (uint8_t)strength, 0,
++    };
++    uint8_t sum = 0;
++    for (unsigned k = 0; k < 7; ++k) sum += p[k];
++    p[7] = (uint8_t)(0u - sum);
++    /* Straight into the TX FIFO (128 bytes): never blocks the caller. */
++    (void)uart_tx_chars(LINK_UART, (const char *)p, sizeof(p));
++}
++
++static void link_task(void *arg)
++{
++    (void)arg;
++    for (;;) {
++        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2));
++        send_packet();
++    }
++}
++
++void tang_link_start(void)
++{
++    const uart_config_t cfg = {
++        .baud_rate = TANG_LINK_BAUD,
++        .data_bits = UART_DATA_8_BITS,
++        .parity = UART_PARITY_DISABLE,
++        .stop_bits = UART_STOP_BITS_1,
++        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
++        .source_clk = UART_SCLK_DEFAULT,
++    };
++    ESP_ERROR_CHECK(uart_driver_install(LINK_UART, 256, 0, 0, NULL, 0));
++    ESP_ERROR_CHECK(uart_param_config(LINK_UART, &cfg));
++    ESP_ERROR_CHECK(uart_set_pin(LINK_UART, TANG_LINK_GPIO, UART_PIN_NO_CHANGE,
++                                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
++    xTaskCreate(link_task, "tang_link", 2048, NULL, 2, &s_task);
++}
++
++void tang_link_kick(void)
++{
++    if (s_task) xTaskNotifyGive(s_task);
++}
+diff --git a/v5/main/tang_link.h b/v5/main/tang_link.h
+new file mode 100644
+index 0000000..a6a815a
+--- /dev/null
++++ b/v5/main/tang_link.h
+@@ -0,0 +1,20 @@
++/* C5VRX-5 Tang IQ link (C5VRX_WITH_TANG project): the raw IQ goes to a
++ * Tang Primer 25K, which does the FM demodulation, and the receiver state
++ * (gain, AFC, channel) follows on a UART so the FPGA knows what the IQ
++ * stands for. design/iq_link.md in the project has the full description. */
++#pragma once
++#include <stdint.h>
++
++/* XIAO edge pins, so the whole IQ bus reaches the Pmod adapter:
++ * Q0..Q3 = D4 D5 D6 D7, I0..I3 = D8 D9 D0 D1. */
++#define TANG_IQ_GPIOS {23, 24, 11, 12, 8, 9, 1, 0}
++/* The resistor DAC moves to pins the adapter leaves open (D2, D3 and the
++ * MTMS/MTDI/MTCK/MTDO pads); its output is not used in this build. */
++#define TANG_DAC_GPIOS {25, 7, 2, 3, 4, 5, -1, -1}
++/* Telemetry UART TX on D10 (GPIO10), 2 Mbaud 8N1. */
++#define TANG_LINK_GPIO 10
++#define TANG_LINK_BAUD 2000000
++
++void tang_link_start(void);
++/* Send a packet now (after a gain or tuning write). Safe from any task. */
++void tang_link_kick(void);
+diff --git a/v5/main/transport.c b/v5/main/transport.c
+index 340cdb8..a736851 100644
+--- a/v5/main/transport.c
++++ b/v5/main/transport.c
+@@ -4,6 +4,7 @@
+  * with interrupts off and cleared suc_eof (espressif/esp-idf#19091), so no
+  * DMA boundary is a stream boundary; the CPU never paces samples. */
+ #include "receiver.h"
++#include "tang_link.h"
+ #include <string.h>
+ #include "driver/bitscrambler.h"
+ #include "driver/parlio_rx.h"
+@@ -27,7 +28,7 @@ BITSCRAMBLER_PROGRAM(s_u85q, "u85q");
+ 
+ /* 6-bit resistor DAC, LSB first (XIAO D4..D9; 8.2k/3.9k/2k/1k/470R/240R
+  * plus 200R). Do not change the tested pin order. */
+-static const int s_dac_gpio[8] = {23, 24, 11, 12, 8, 9, -1, -1};
++static const int s_dac_gpio[8] = TANG_DAC_GPIOS;   /* Tang IQ build: D4..D9 carry IQ */
+ 
+ DMA_ATTR __attribute__((aligned(64))) uint8_t s_raw_ring[RAW_RING_BYTES];
+ static parlio_rx_unit_handle_t s_rx;
+@@ -68,8 +69,7 @@ static esp_err_t prepare_rx(void)
+         .clk_out_gpio_num = -1,
+         .valid_gpio_num = -1,
+         /* Same order as rf.c s_iq_pins: Q bits 0..3, I bits 4..7. */
+-        .data_gpio_nums = {GPIO_NUM_1, GPIO_NUM_0, GPIO_NUM_25, GPIO_NUM_7,
+-                           GPIO_NUM_10, GPIO_NUM_5, GPIO_NUM_3, GPIO_NUM_4},
++        .data_gpio_nums = TANG_IQ_GPIOS,
+         .flags = {.free_clk = true, .clk_gate_en = false, .allow_pd = false},
+     };
+     esp_err_t err = parlio_new_rx_unit(&cfg, &s_rx);

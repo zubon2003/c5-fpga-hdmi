@@ -1,0 +1,13 @@
+** Drc report for out/c5vrx_pmod_adapter.kicad_pcb **
+** Created on 2026-10-06 13:57:05 **
+
+** Found 1 DRC violations **
+[lib_footprint_mismatch]: Footprint 'PinHeader_2x06_P2.54mm_Horizontal' does not match copy in library 'Connector_PinHeader_2.54mm'.
+    Local override; Severity: warning
+    @(103.1500 mm, 86.6400 mm): Footprint J1
+
+** Found 0 unconnected pads **
+
+** Found 0 Footprint errors **
+
+** End of Report **
