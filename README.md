@@ -15,8 +15,10 @@ stretched to 16:9).
 
 The C5VRX-5 firmware already puts the radio's raw 4-bit IQ samples
 (MODEM_DIAG Q4/I4) on eight GPIO pins. The FPGA taps those pins in
-parallel; the ESP32-C5 firmware is used unmodified and keeps doing the
-gain control, AFC and channel selection.
+parallel; the ESP32-C5 firmware keeps doing the gain control, AFC and
+channel selection. Official releases up to v5.0.464 work unmodified;
+later ones moved two IQ pins, and [firmware/](firmware/README.md) has a
+patched v5.0.523 (see [C5VRX version](#c5vrx-version)).
 
 ## Origins
 
