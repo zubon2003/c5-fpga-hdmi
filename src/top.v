@@ -9,7 +9,9 @@
 //   (0.2 us), 'f' field offset direction, 'c' colour on/off, 'v' V sign,
 //   'a' / 'z' colour saturation +/- 0.25x, '[' / ']' hue -/+ 11.25 degrees,
 //   'm' FM demodulator mode 0..3 (src/fm_demod.v; 1 at power-up),
-//   'A' picture 4:3 (960 x 720 with black pillars, power-up) / 16:9 stretch
+//   'A' picture 4:3 (960 x 720 with black pillars, power-up) / 16:9 stretch,
+//   'g' output genlock: pixel clock (power-up; fixed HDMI timing, PLL
+//   phase steps) / off (fixed timing, picture rolls) / porch lines
 module top (
     input  wire       clk,          // 50 MHz
     output wire       led,
@@ -24,8 +26,13 @@ module top (
     output wire [2:0] tmds_d_p,   tmds_d_n
 );
     wire clk_5x, clk_iq_fast, pll_lock, clk_pixel, clk_iq;
+    wire lock_iq, lock_hdmi;
+    assign pll_lock = lock_iq & lock_hdmi;
 
-    pll u_pll (.clkin(clk), .clkout0(clk_5x), .clkout1(clk_iq_fast), .lock(pll_lock));
+    wire ps_dir, ps_pulse;
+    pll u_pll (.clkin(clk), .clkout1(clk_iq_fast), .lock(lock_iq));
+    pll_hdmi u_pll_hdmi (.clkin(clk), .clkout0(clk_5x),
+                         .psdir(ps_dir), .pspulse(ps_pulse), .lock(lock_hdmi));
 
     // IQ domain: IDES8 at 337.5 MHz DDR, 8 samples per 84.375 MHz clock.
     CLKDIV u_div_iq (.CLKOUT(clk_iq), .HCLKIN(clk_iq_fast), .RESETN(pll_lock), .CALIB(1'b0));
@@ -122,6 +129,7 @@ module top (
     reg [3:0]  sat         = 4'd4;     // 1x
     reg [4:0]  hue         = 5'd0;
     reg        ar43        = 1'b1;
+    reg [1:0]  gl_mode     = 2'd0;     // 0 pixel clock, 1 off, 2 porch lines
     always @(posedge clk_iq) if (rx_valid) begin
         case (rx_data)
             "P": pic_mode_iq <= 1'b1;
@@ -139,6 +147,7 @@ module top (
             "]": hue <= hue + 5'd1;
             "m": fm_mode <= fm_mode + 2'd1;
             "A": ar43    <= ~ar43;
+            "g": gl_mode <= (gl_mode == 2'd2) ? 2'd0 : gl_mode + 2'd1;
             default: ;
         endcase
     end
@@ -166,7 +175,7 @@ module top (
     // (blackouts in flight, 2026-10-22).
     reg [2:0] field_s;
     reg [1:0] freal_s;
-    reg [1:0] parity_s, mode_s, color_s, vinv_s, ar43_s;
+    reg [1:0] parity_s, mode_s, color_s, vinv_s, ar43_s, pclk_s, free_s;
     reg [3:0] sat_s1, sat_s2;
     reg [4:0] hue_s1, hue_s2;
     always @(posedge clk_pixel) begin
@@ -177,6 +186,8 @@ module top (
         color_s  <= {color_s[0], color_on};
         vinv_s   <= {vinv_s[0], v_inv};
         ar43_s   <= {ar43_s[0], ar43};
+        pclk_s   <= {pclk_s[0], gl_mode == 2'd0};
+        free_s   <= {free_s[0], gl_mode == 2'd1};
         sat_s1   <= sat;
         sat_s2   <= sat_s1;
         hue_s1   <= hue;
@@ -189,7 +200,8 @@ module top (
     wire [9:0]  y;
     wire de, hsync, vsync, frame_start, line_start;
     video_timing u_timing (
-        .clk(clk_pixel), .rst(rst), .go(field_go), .x(x), .y(y), .de(de),
+        .clk(clk_pixel), .rst(rst), .go(field_go), .pclk(pclk_s[1]), .free(free_s[1]),
+        .ps_pulse(ps_pulse), .ps_dir(ps_dir), .x(x), .y(y), .de(de),
         .hsync(hsync), .vsync(vsync), .frame_start(frame_start), .line_start(line_start),
         .jumps(out_jumps)
     );

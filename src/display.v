@@ -1,4 +1,4 @@
-// 1280x720 status display, three pipeline stages (74.48 MHz pixel clock):
+// 1280x720 status display, three pipeline stages (73.33 MHz pixel clock):
 //   y 0..479    waveform monitor of one demodulated line (scope_line):
 //               1280 samples at 20 MS/s = 64 us across, 200 px = 10 us grid,
 //               y = 240 - vid * 3 / 16, so 38.4 px per MHz

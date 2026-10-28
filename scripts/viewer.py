@@ -43,9 +43,9 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 CAP_DIR = os.path.join(ROOT, "captures")
 CMD_FILE = os.path.join(CAP_DIR, "viewer_cmd.txt")
 LOG_FILE = os.path.join(CAP_DIR, "viewer_log.txt")
-KEYS = "PWudhlfcvaz[]mA"
+KEYS = "PWudhlfcvaz[]mAg"
 DEFAULTS = {"mode": "P", "first": 16, "act": 752, "f": 1, "c": 1, "v": 1, "sat": 4, "hue": 0, "fm": 1,
-            "ar43": 1}   # as in src/top.v
+            "ar43": 1, "gl": 0}   # as in src/top.v
 
 
 def write_png(path, rgb, w=W, h=H):
@@ -156,13 +156,16 @@ class Viewer:
                 s["fm"] = (s["fm"] + 1) % 4
             elif ch == "A":
                 s["ar43"] ^= 1
+            elif ch == "g":
+                s["gl"] = (s["gl"] + 1) % 3
         self.log(f"sent {chars!r} -> {self.describe()}")
 
     def describe(self):
         s = self.settings
         return (f"mode {s['mode']}  first line {s['first']}  start {s['act'] / 80:.2f} us  "
                 f"field flip {s['f']}  colour {s['c']}  V inv {s['v']}  sat {s['sat'] / 4:.2f}x  hue {s['hue'] * 11.25:+.1f} deg  "
-                f"FM {('adjacent', 'PLL fast', 'PLL', 'PLL slow')[s['fm']]}  {'4:3' if s['ar43'] else '16:9'}")
+                f"FM {('adjacent', 'PLL fast', 'PLL', 'PLL slow')[s['fm']]}  {'4:3' if s['ar43'] else '16:9'}  "
+                f"genlock {('pixel clock', 'off', 'porch lines')[s['gl']]}")
 
     def capture(self, mode, path):
         with self.ser_lock:

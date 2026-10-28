@@ -182,6 +182,7 @@ characters change settings at run time (they reset at power-off):
 | `[` / `]` | hue −/+ 11.25° |
 | `m` | FM demodulator mode: 0 adjacent, 1 PLL fast (power-up), 2 PLL, 3 PLL slow |
 | `A` | picture 4:3 (960×720 with black pillars, power-up) / stretched to 16:9 |
+| `g` | output genlock: pixel clock (power-up) / off (picture rolls) / porch lines |
 | `T` | status packet (sync, levels, colour lock, receiver channel) |
 | `C` `S` `B` `G` | logic-analyser captures (raw IQ, symbols, FM output, chroma) |
 
@@ -216,9 +217,10 @@ Tang Primer 25K
                      chroma low-pass, two-line chroma average
   display            240 → 720 lines with vertical interpolation (field 2
                      placed 1.5 rows lower), BT.601 RGB
-  video_timing       1280×720, always 750 lines of 1657 pixels; locked to
-                     the input field by changing only the five vertical
-                     front porch lines (PI loop)
+  video_timing       1280×720, always 750 lines of 1631 pixels at
+                     73.33 MHz; locked to the input field by moving the
+                     pixel clock (PI loop driving dynamic phase steps of
+                     a second PLL), so the HDMI timing never changes
   TMDS / OSER10      → PMOD DVI (J6)
 ```
 
@@ -228,8 +230,14 @@ Notes from bring-up:
 - A frame length that changes from frame to frame (an earlier version
   repeated the last line to wait for the input) worked on a capture card
   but not on an HDMI monitor; changing the length of picture lines sheared
-  the picture on the capture card. Only the vertical front porch lines
-  change length now.
+  the picture on the capture card. Changing only the vertical front porch
+  lines suited monitors and the capture card, but HDZero goggles (HDMI in)
+  showed white and re-synced on every change, even BASE ± 1 for whole
+  frames. The pixel clock now follows the input instead: the HDMI PLL's
+  output takes 1/8-VCO-period phase steps (113.6 ps), about 1.3 million a
+  second for the usual 150 ppm offset. This needs an integer output
+  divider; with the fractional 3.625 used before, the phase wrapped after
+  three VCO periods and the steps did not change the frequency at all.
 - Sharp horizontal edges (OSD text) still move by about a line between
   fields: each field is shown on its own (bob). Removing that needs a
   field store, i.e. external SDRAM.

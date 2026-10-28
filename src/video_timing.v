@@ -1,11 +1,16 @@
 // 1280x720p timing, 750 lines per frame always, positive syncs.
 //
+// Power-up (pclk): every line is BASE pixels and the loop below moves the
+// pixel clock (PLL phase steps) instead of line lengths; HDZero goggles
+// re-sync on any line length change. The porch-line method described
+// next is still there as key 'g' mode 2.
+//
 // Genlock by line length: the frame must follow the input field (59.94 Hz)
 // because the line ring holds only 16 lines. Repeating the last line until
 // the input was ready (the first version) made frames 752..754 lines long;
 // the capture card took that, but an HDMI monitor did not show the picture.
 // Now the line count stays 750 and the line length moves instead:
-//   BASE = 1657 pixels at 74.48 MHz: 59.93 Hz, close to the input;
+//   BASE = 1631 pixels at 73.33 MHz: 59.95 Hz, close to the input;
 //   E pixels per frame (|E| <= 750) go into the five vertical front porch
 //   lines (720..724, just before vsync), E / 5 each; all other lines are
 //   exactly BASE. Spreading E one pixel per line over the whole frame made
@@ -29,6 +34,10 @@ module video_timing (
     input  wire        clk,
     input  wire        rst,
     input  wire        go,            // pulse: input field ready
+    input  wire        pclk,          // genlock by the pixel clock (below)
+    input  wire        free,          // genlock off: fixed 1631 x 750 frames
+    output reg         ps_pulse,      // pclk: PLL CLKOUT0 phase steps
+    output reg         ps_dir,
     output reg  [10:0] x,
     output reg  [9:0]  y,
     output reg         de,
@@ -38,10 +47,10 @@ module video_timing (
     output reg         line_start,
     output reg  [15:0] jumps          // re-acquisitions so far (status)
 );
-    localparam H_ACTIVE = 1280, H_SYNC = 40, H_BP = 227;     // front porch: the rest (~110)
+    localparam H_ACTIVE = 1280, H_SYNC = 40, H_BP = 227;     // front porch: the rest (84)
     localparam [10:0] H_START = H_SYNC + H_BP;                // first picture pixel: 267
     localparam V_ACTIVE = 720,  V_FP = 5,   V_SYNC = 5,  V_BP = 20;
-    localparam [10:0] BASE    = 11'd1657;
+    localparam [10:0] BASE    = 11'd1631;
     localparam [9:0]  V_TOTAL = V_ACTIVE + V_FP + V_SYNC + V_BP;   // 750
     localparam [9:0]  TARGET  = 10'd745;     // go 5 lines before the frame starts
     localparam [9:0]  JUMP    = 10'd8;
@@ -83,8 +92,14 @@ module video_timing (
     // Length of the next line: vc is the line that ends now, so the next
     // one is vc + 1.
     wire [9:0] vn = (vc == V_TOTAL - 1) ? 10'd0 : vc + 10'd1;
+    // pclk: HDZero goggles re-acquire (flicker) on any change of a line
+    // length, even BASE +- 1 for whole frames. Then every line stays BASE
+    // and E moves the pixel clock instead: E pixels per frame are E * 120
+    // dynamic phase steps of the TMDS clock (1/8 VCO period = 113.6 ps; a
+    // pixel is 5 * 3 VCO periods, pll.v), spread evenly over the frame.
     wire signed [11:0] h_next = $signed({1'b0, BASE}) - 12'sd1 +
-                                ((vn >= 10'd720 && vn <= 10'd723) ? e_line :
+                                (pclk ? 11'sd0 :
+                                 (vn >= 10'd720 && vn <= 10'd723) ? e_line :
                                  (vn == 10'd724)                  ? e_last : 11'sd0);
 
     always @(posedge clk) begin
@@ -93,6 +108,18 @@ module video_timing (
             e_frame <= 0; integ <= 0;
             since_go <= 2'd3; locked <= 1'b0; jumps <= 0;
             ph <= 0; stray <= 1'b0;
+        end else if (free) begin
+            // fixed timing, no lock (key 'g'): the picture sits anywhere
+            // and slowly rolls against the input
+            e_frame <= 0; integ <= 0; locked <= 1'b0; ph <= 0; stray <= 1'b0;
+            since_go <= 2'd3;
+            if (hc == BASE - 11'd1) begin
+                hc <= 0;
+                h_last <= BASE - 11'd1;
+                vc <= (vc == V_TOTAL - 1) ? 10'd0 : vc + 10'd1;
+            end else begin
+                hc <= hc + 11'd1;
+            end
         end else if (go && (!locked || (!near && stray))) begin
             // (re)acquire: move straight to the wanted position
             vc <= TARGET; hc <= 0; h_last <= BASE - 11'd1;
@@ -133,6 +160,34 @@ module video_timing (
                 end
             end else begin
                 hc <= hc + 11'd1;
+            end
+        end
+    end
+
+    // Phase step pulses: |E| * 120 per frame of BASE * 750 clocks, as a
+    // rate accumulator; each step is 3 clocks high, 5 low.
+    localparam [21:0] FRAME_PX = BASE * 750;
+    wire [10:0] e_abs = e_frame[10] ? -e_frame : e_frame;
+    reg  [21:0] n_st;                            // |E| * 120 <= 90000
+    always @(posedge clk) n_st <= {e_abs, 7'd0} - {e_abs, 3'd0};
+    reg  [21:0] ps_acc /* synthesis syn_dspstyle = "logic" */;
+    reg  [3:0]  ps_owed;
+    reg  [2:0]  ps_cnt;
+    wire        ps_due = (ps_acc + n_st >= FRAME_PX);
+    always @(posedge clk) begin
+        if (rst || !pclk || free) begin
+            ps_acc <= 0; ps_owed <= 0; ps_cnt <= 0; ps_pulse <= 1'b0;
+        end else begin
+            ps_acc  <= ps_due ? ps_acc + n_st - FRAME_PX : ps_acc + n_st;
+            if (ps_cnt != 0) begin
+                ps_cnt   <= ps_cnt + 3'd1;
+                ps_pulse <= (ps_cnt < 3'd3);
+                ps_owed  <= ps_owed + {3'd0, ps_due};
+            end else if (ps_owed != 0 || ps_due) begin
+                ps_cnt   <= 3'd1;
+                ps_pulse <= 1'b1;
+                ps_dir   <= e_frame[10];     // E > 0: later edges (0 = increase)
+                ps_owed  <= ps_owed + {3'd0, ps_due} - 4'd1;
             end
         end
     end
