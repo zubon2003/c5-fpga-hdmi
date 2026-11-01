@@ -1,0 +1,70 @@
+** Drc report for tang25k_base.kicad_pcb **
+** Created on 2026-10-31T22:28:44+0900 **
+
+** Found 18 DRC violations **
+[silk_edge_clearance]: 基板端でシルクスクリーンが切り取られている
+    Rule: board setup constraints silk; warning
+    @(0.0000 mm, 50.0000 mm): セグメント (Edge.Cuts 上)
+    @(4.6000 mm, 19.2000 mm): 基板上のテキスト 'USB JTAG/UART' ( F.Silkscreen 上)
+[lib_footprint_issues]: 現在の設定には 'tang25k_base' のライブラリは含まれません。
+    Local override; warning
+    @(87.0550 mm, 47.1450 mm): フットプリント TP21
+[lib_footprint_issues]: 現在の設定には 'tang25k_base' のライブラリは含まれません。
+    Local override; warning
+    @(67.5550 mm, 47.1450 mm): フットプリント TP11
+[lib_footprint_issues]: 現在の設定には 'tang25k_base' のライブラリは含まれません。
+    Local override; warning
+    @(89.5950 mm, 47.1450 mm): フットプリント TP22
+[lib_footprint_issues]: 現在の設定には 'tang25k_base' のライブラリは含まれません。
+    Local override; warning
+    @(46.0000 mm, 28.0000 mm): フットプリント M1
+[lib_footprint_issues]: 現在の設定には 'tang25k_base' のライブラリは含まれません。
+    Local override; warning
+    @(87.0550 mm, 42.0650 mm): フットプリント TP23
+[lib_footprint_issues]: 現在の設定には 'tang25k_base' のライブラリは含まれません。
+    Local override; warning
+    @(46.0000 mm, 21.0000 mm): フットプリント J2
+[lib_footprint_issues]: 現在の設定には 'tang25k_base' のライブラリは含まれません。
+    Local override; warning
+    @(70.0950 mm, 47.1450 mm): フットプリント TP12
+[lib_footprint_issues]: 現在の設定には 'tang25k_base' のライブラリは含まれません。
+    Local override; warning
+    @(67.5550 mm, 42.0650 mm): フットプリント TP13
+[lib_footprint_issues]: 現在の設定には 'tang25k_base' のライブラリは含まれません。
+    Local override; warning
+    @(46.0000 mm, 35.0000 mm): フットプリント J1
+[silk_over_copper]: ハンダマスクでシルクスクリーンが切り取られている
+    Local override; warning
+    @(23.0000 mm, 33.1000 mm): 基板上のテキスト 'RIGHT (4)' ( F.Silkscreen 上)
+[silk_over_copper]: ハンダマスクでシルクスクリーンが切り取られている
+    Local override; warning
+    @(69.0000 mm, 46.5000 mm): 基板上のテキスト 'USB-C' ( F.Silkscreen 上)
+[silk_over_copper]: ハンダマスクでシルクスクリーンが切り取られている
+    Local override; warning
+    @(88.5000 mm, 46.5000 mm): 基板上のテキスト 'USB-C' ( F.Silkscreen 上)
+[silk_overlap]: シルクスクリーンのオーバーラップ
+    Rule: board setup constraints silk; warning
+    @(15.0000 mm, 33.1000 mm): 基板上のテキスト 'OK (5)' ( F.Silkscreen 上)
+    @(13.2500 mm, 32.3000 mm): セグメント (F.Silkscreen 上)
+[silk_overlap]: シルクスクリーンのオーバーラップ
+    Rule: board setup constraints silk; warning
+    @(15.0000 mm, 33.1000 mm): 基板上のテキスト 'OK (5)' ( F.Silkscreen 上)
+    @(13.7000 mm, 32.7500 mm): セグメント (F.Silkscreen 上)
+[silk_overlap]: シルクスクリーンのオーバーラップ
+    Rule: board setup constraints silk; warning
+    @(16.7500 mm, 32.3000 mm): セグメント (F.Silkscreen 上)
+    @(15.0000 mm, 33.1000 mm): 基板上のテキスト 'OK (5)' ( F.Silkscreen 上)
+[silk_overlap]: シルクスクリーンのオーバーラップ
+    Rule: board setup constraints silk; warning
+    @(13.7000 mm, 39.7500 mm): セグメント (F.Silkscreen 上)
+    @(15.0000 mm, 40.1000 mm): 基板上のテキスト 'DOWN (2)' ( F.Silkscreen 上)
+[silk_overlap]: シルクスクリーンのオーバーラップ
+    Rule: board setup constraints silk; warning
+    @(16.7500 mm, 39.3000 mm): セグメント (F.Silkscreen 上)
+    @(15.0000 mm, 40.1000 mm): 基板上のテキスト 'DOWN (2)' ( F.Silkscreen 上)
+
+** Found 0 unconnected pads **
+
+** Found 0 Footprint errors **
+
+** End of Report **
