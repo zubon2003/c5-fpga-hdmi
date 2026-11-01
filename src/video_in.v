@@ -46,6 +46,7 @@ module video_in (
     input  wire               ar43,         // 480 pixels per line instead of 640
     output reg                we,
     output reg  [14:0]        waddr,
+    output reg  [14:0]        waddr24,      // same pixel in a 24-line ring (SDRAM bypass, top.v)
     output reg  [15:0]        wdata,
     output reg                field_tg,     // toggles when active line 2 is written
     output reg                ln_done,      // pulse: active line ln_idx is complete
@@ -529,10 +530,13 @@ module video_in (
         c_up <= cprev[m_px];                  // read for the pixel entering stage 3
         if (n_v) cprev[n_px] <= c_cur;
     end
+    wire [7:0] idx_q24 = idx_n[7:0] / 8'd24;
+    wire [4:0] slot24  = idx_n[7:0] - {idx_q24[4:0], 3'd0} - {idx_q24[3:0], 4'd0};   // idx mod 24
     always @(posedge clk) begin
         we <= n_v;
         if (n_v) begin
             waddr <= {idx_n[2:0], 9'd0} + {idx_n[2:0], 7'd0} + {5'd0, n_px};   // slot * 640 + px
+            waddr24 <= {slot24, 9'd0} + {2'd0, slot24, 7'd0} + {5'd0, n_px};
             if (n_prod < 0)                    wdata[15:8] <= 8'd0;
             else if (n_prod[28:12] > 17'd255)  wdata[15:8] <= 8'd255;
             else                               wdata[15:8] <= n_prod[19:12];

@@ -12,7 +12,8 @@ Analog 5.8 GHz FPV video (FM, NTSC) received by an ESP32-C5 running
 **Tang Primer 25K** FPGA and shown in colour on an HDMI monitor at
 **1280×720p, 59.94 Hz** (CEA 720p frame timing; a 4:3 picture, 960×720 with
 black pillars, or stretched to 16:9). An SDRAM field store lets the HDMI
-output run on a fixed pixel clock, which HDZero goggles need.
+output run on a fixed pixel clock, which HDZero goggles need; with genlock
+on, the output follows the input with about 1 ms of latency and no SDRAM.
 
 The C5VRX-5 firmware already puts the radio's raw 4-bit IQ samples
 (MODEM_DIAG Q4/I4) on eight GPIO pins. The FPGA taps those pins in
@@ -46,7 +47,7 @@ patched v5.0.523 (see [C5VRX version](#c5vrx-version)).
 | Seeed XIAO ESP32-C5 | running C5VRX-5 (see below) |
 | Sipeed Tang Primer 25K + Tang Primer 25K Dock | GW5A-LV25MG121 |
 | Sipeed PMOD DVI (HDMI) module | on Dock PMOD **J5** (middle) |
-| Sipeed Tang SDRAM module (32 MB, 16 bit) | on the Dock's 40-pin header **J3**; field store (`src/sdram_fb.v`) |
+| Sipeed Tang SDRAM module (32 MB, 16 bit) | on the Dock's 40-pin header **J3**; field store (`src/sdram_fb.v`), needed for genlock off (power-up, HDZero) |
 | HDMI monitor or capture device | 720p input |
 | 9 jumper wires (8 signals + GND), short | XIAO → Dock PMOD **J4** |
 | Analog 5.8 GHz VTX (NTSC) | tested on F3 (5780 MHz) |
@@ -121,8 +122,10 @@ column odd pins). Find pin 1 with a meter (+3.3 V) before wiring.
 - The PMOD DVI goes on **J5** (the middle PMOD; J6 until 2026-11-01).
 
 The SDRAM module plugs into the Dock's 40-pin header J3 (pins as in
-Sipeed's TangPrimer-25K-example `nestang-25k`). Every picture goes
-through it, so the module is required.
+Sipeed's TangPrimer-25K-example `nestang-25k`). With genlock off (the
+power-up setting, needed for HDZero goggles) every picture goes through
+it. With genlock on (`g`) the SDRAM is bypassed, so the board can also be
+used without the module: the picture appears after `g` is pressed.
 
 Optional receiver link (modified C5 firmware only), through the Dock's
 USB-A host port **J13** (a USB-A plug breakout; the port's D+ / D- go to
@@ -184,8 +187,11 @@ clock and shows fields from the SDRAM field store. The added delay is
 between about 0.5 ms and one field (16.7 ms), about 8 ms on average; it
 drifts slowly as the output and the input clocks differ, and steps back
 by one field every few minutes (one field is dropped or shown twice).
-The genlock modes (`g`) lock the output to the input instead, but HDZero
-goggles cannot follow the timing changes they make.
+The genlock modes (`g`) lock the output to the input and bypass the SDRAM:
+the display reads the lines straight from a 24-line ring, about 0.2 ms
+behind the input at the top of the picture and about 1 ms at the bottom
+(computed, not measured). HDZero goggles cannot follow the timing changes
+genlock makes.
 
 With the receiver link: the Dock key on H11 steps the band, the key on
 H10 the channel (R, A, B, E, F, L; 1..8). The new channel name (e.g. `F3`)
@@ -206,20 +212,43 @@ characters change settings at run time (they reset at power-off):
 | `[` / `]` | hue −/+ 11.25° |
 | `m` | FM demodulator mode: 0 adjacent, 1 PLL fast (power-up), 2 PLL, 3 PLL slow |
 | `A` | picture 4:3 (960×720 with black pillars, power-up) / stretched to 16:9 |
-| `g` | output genlock, in turn: off (power-up; fixed 74.18 MHz pixel clock, SDRAM field store) → porch lines → pixel clock (PLL phase steps) → off |
+| `g` | output genlock, in turn: off (power-up; fixed 74.18 MHz pixel clock, SDRAM field store) → porch lines → pixel clock (PLL phase steps) → off. Both genlock modes bypass the SDRAM (low latency, no module needed) |
 | `K` | SDRAM read timing test (result in `T` word 13) |
 | `k` | invert the SDRAM clock, then run the test |
 | `T` | status packet (sync, levels, colour lock, receiver channel, SDRAM status, pixel clock meter) |
+| `R` | read back the settings above (`IQLR`, 8 bytes; layout in `src/top.v`, `settings`) |
 | `C` `S` `B` `G` | logic-analyser captures (raw IQ, symbols, FM output, chroma) |
 
-`scripts/viewer.py` shows the HDMI output through a UVC capture device,
-sends these keys from its window and decodes `T`:
+`scripts/viewer.py` is the PC test app: it shows the HDMI output through
+a UVC capture device and controls the FPGA over the UART.
+
+- **Picture**: scales with the window; F11 (or View > Fullscreen) for full
+  screen, Esc to leave.
+- **Control panel**: every setting above as buttons (display mode, 4:3 /
+  16:9, genlock mode, FM demodulator, colour, hue, saturation, picture
+  position, SDRAM test, snapshot, recording, logic-analyser captures).
+  The panel shows the FPGA's own settings, read back with `R` when the
+  UART opens, after every key and once a second (with an older bitstream
+  without `R` it tracks what it sent).
+- **Live status**: the `T` packet once a second (sync, fields, levels,
+  colour lock, receiver channel, pixel clock, SDRAM test result).
+- **Device** menu: the capture device (default "C8 USB3.0 Video" if
+  present, else the first; `--device`, `--list-devices`).
+- **Port** menu: the UART (Auto = the Dock debugger's second COM port,
+  found by its FTDI serial number; `--port`).
+- The capture and the UART reconnect by themselves when the board or the
+  capture device is unplugged and comes back.
+- Keyboard: the keys above, plus `s` snapshot, `r` record, `q` quit.
+
+Double-click `viewer.bat` in the repository root to start it (it checks
+the requirements first and passes any arguments on), or:
 
 ```powershell
+py -3 scripts\viewer.py
 py -3 scripts\viewer.py --device "C8 USB3.0 Video" --port COM4
 ```
 
-Requirements: Python 3 with numpy and pyserial, ffmpeg on the PATH.
+Requirements: Python 3 with numpy, pyserial and Pillow, ffmpeg on the PATH.
 `scripts/iqla.py`, `demod.py`, `fm_model.py` and `resampler_model.py` are
 the host tools and bit-level models used to verify each stage on the board.
 
@@ -240,7 +269,9 @@ Tang Primer 25K
                      sync depth, 640 pixels per line into an 8-line ring
   sdram_fb           field store in the SDRAM module: 4 field buffers;
                      input ring → SDRAM → 8-line output ring, so the
-                     output does not have to follow the input
+                     output does not have to follow the input (genlock
+                     off); with genlock on, video_in writes the output
+                     ring directly as a 24-line ring (SDRAM bypass)
   chroma             3.58 MHz NCO frequency-locked to the burst, burst
                      reference averaged over lines (hue + ACC), 1.6 µs
                      chroma low-pass, two-line chroma average
@@ -280,7 +311,7 @@ Notes from bring-up:
 - After reprogramming, the capture card used during development sometimes
   stayed black until the display mode was switched once (`W`, then `P`).
 
-Resources: about 4,900 LUTs (7,800 logic cells with ALUs), 33 of 56 BSRAM,
+Resources: about 5,000 LUTs (7,900 logic cells with ALUs), 41 of 56 BSRAM,
 72 % of the DSP blocks, 2 of 6 PLLs.
 
 A detailed development log (Japanese) is in

@@ -12,7 +12,8 @@
 //   'A' picture 4:3 (960 x 720 with black pillars, power-up) / 16:9 stretch,
 //   'g' output genlock: off (power-up; the SDRAM field store decouples the
 //   output) / porch lines / pixel clock (PLL phase steps),
-//   'K' SDRAM read timing test, 'k' invert the SDRAM clock and test
+//   'K' SDRAM read timing test, 'k' invert the SDRAM clock and test,
+//   'R' read back the settings above (8 bytes, see `settings` below)
 //   (sdram_fb.v; result in status word 13)
 module top (
     input  wire       clk,          // 50 MHz
@@ -150,9 +151,10 @@ module top (
     uart_tx #(.DIV(84)) u_tx (.clk(clk_iq), .rst(rst_iq), .valid(tx_valid),
                               .data(tx_data), .ready(tx_ready), .txd(uart_tx));
 
+    wire [63:0] settings;      // UART settings for 'R', assigned below
     iq_la u_la (
         .clk(clk_iq), .rst(rst_iq), .win(win), .sym_valid(sym_valid), .sym(sym),
-        .fm_valid(fm_valid), .fm_vid(fm_vid), .fm_sym(fm_sym), .status(la_status),
+        .fm_valid(fm_valid), .fm_vid(fm_vid), .fm_sym(fm_sym), .status(la_status), .settings(settings),
         .g_valid(cdbg_v), .g_word(cdbg_w),
         .rx_valid(rx_valid), .rx_data(rx_data),
         .tx_valid(tx_valid), .tx_data(tx_data), .tx_ready(tx_ready),
@@ -171,6 +173,12 @@ module top (
     reg [4:0]  hue         = 5'd0;
     reg        ar43        = 1'b1;
     reg [1:0]  gl_mode     = 2'd1;     // 0 pixel clock, 1 off, 2 porch lines
+    wire       bypass      = (gl_mode != 2'd1);   // genlock on: no SDRAM (below)
+    // Settings read back with 'R' (iq_la.v): byte 0 {v_inv, color_on,
+    // fm_mode, gl_mode, ar43, picture}, 1 {par_inv, sat}, 2 hue, 3 first
+    // line, 4..5 picture start (act), 6 layout version (1), 7 zero.
+    assign settings = {8'd0, 8'd1, 3'd0, act_start, first_line[7:0], 3'd0, hue,
+                       3'd0, par_inv, sat, v_inv, color_on, fm_mode, gl_mode, ar43, pic_mode_iq};
     reg        fb_recal    = 1'b0;
     reg        fb_flip     = 1'b0;
     always @(posedge clk_iq) begin
@@ -200,7 +208,7 @@ module top (
     end
 
     wire        lb_we;
-    wire [14:0] lb_waddr;
+    wire [14:0] lb_waddr, lb_waddr24;
     wire [15:0] lb_wdata;
     wire        field_tg, field_parity, field_real;
     wire        ln_done;
@@ -210,7 +218,7 @@ module top (
     video_in u_vin (
         .clk(clk_iq), .rst(rst_iq), .in_valid(fm_valid), .vid(fm_vid), .d(fm_d),
         .first(first_line), .act(act_start), .ar43(ar43),
-        .we(lb_we), .waddr(lb_waddr), .wdata(lb_wdata),
+        .we(lb_we), .waddr(lb_waddr), .waddr24(lb_waddr24), .wdata(lb_wdata),
         .field_tg(field_tg), .ln_done(ln_done), .ln_idx(ln_idx),
         .parity(field_parity), .field_real(field_real),
         .real_lines(real_lines), .field_lines(field_lines), .status(vin_status), .jumps(out_jumps),
@@ -226,18 +234,19 @@ module top (
     // (blackouts in flight, 2026-10-22).
     reg [2:0] field_s;
     reg [1:0] freal_s;
-    reg [1:0] parity_s, mode_s, color_s, vinv_s, ar43_s, pclk_s, free_s;
+    reg [1:0] parity_s, mode_s, color_s, vinv_s, ar43_s, pclk_s, free_s, byp_s;
     reg [3:0] sat_s1, sat_s2;
     reg [4:0] hue_s1, hue_s2;
     always @(posedge clk_pixel) begin
         field_s  <= {field_s[1:0], field_tg};
         freal_s  <= {freal_s[0], field_real};
-        parity_s <= {parity_s[0], fb_parity ^ par_inv};
+        parity_s <= {parity_s[0], (bypass ? field_parity : fb_parity) ^ par_inv};
         mode_s   <= {mode_s[0], pic_mode_iq};
         color_s  <= {color_s[0], color_on};
         vinv_s   <= {vinv_s[0], v_inv};
         ar43_s   <= {ar43_s[0], ar43};
         pclk_s   <= {pclk_s[0], gl_mode == 2'd0};
+        byp_s    <= {byp_s[0], bypass};
         free_s   <= {free_s[0], gl_mode == 2'd1};
         sat_s1   <= sat;
         sat_s2   <= sat_s1;
@@ -270,7 +279,15 @@ module top (
     // output line the pixel domain asks for the field lines the display
     // needs next: lines 0..4 on the last line of a frame, then one more
     // every 3 lines (a field line covers 3 output lines), up to 239. The
-    // output ring is 8 lines; at most ~6 are in use.
+    // field store uses 8 lines of the output ring; at most ~6 are in use.
+    //
+    // SDRAM bypass: with genlock on (g: porch lines or pixel clock) the
+    // output follows the input, so video_in writes the output ring directly
+    // as a 24-line ring (line mod 24; the output trails the input by up to
+    // ~14 lines plus 2 of look-ahead) and the display reads it as before the
+    // field store (latency ~0.2 ms at the top of the picture to ~1 ms at the
+    // bottom). This works without the SDRAM module; sdram_fb keeps running
+    // but its output ring writes are ignored.
     wire [12:0] ir_addr;
     wire [15:0] ir_data;
     line_buffer u_iring (
@@ -309,8 +326,11 @@ module top (
 
     wire [14:0] pic_addr;
     wire [15:0] pic;
-    line_buffer u_oring (
-        .wclk(clk_iq), .we(or_we), .waddr({2'b00, or_addr}), .wdata(or_data),
+    line_buffer #(.LINES(24)) u_oring (
+        .wclk(clk_iq),
+        .we(bypass ? lb_we : or_we),
+        .waddr(bypass ? lb_waddr24 : {2'b00, or_addr}),
+        .wdata(bypass ? lb_wdata : or_data),
         .rclk(clk_pixel), .raddr(pic_addr), .rdata(pic)
     );
 
@@ -320,7 +340,7 @@ module top (
         .clk(clk_pixel), .x(x), .y(y), .de(de), .hsync(hsync), .vsync(vsync),
         .line_start(line_start), .activity(activity), .early_cnt(early_cnt),
         .late_cnt(late_cnt), .sc_rd(sc_rd), .sc_trig(sc_trig),
-        .pic_mode(mode_s[1]), .ar43(ar43_s[1]), .parity(parity_s[1]), .color_on(color_s[1]), .v_inv(vinv_s[1]), .sat(sat_s2), .hue(hue_s2),
+        .pic_mode(mode_s[1]), .ar43(ar43_s[1]), .parity(parity_s[1]), .bypass(byp_s[1]), .color_on(color_s[1]), .v_inv(vinv_s[1]), .sat(sat_s2), .hue(hue_s2),
         .osd_name(ch_name),
         .pic_addr(pic_addr), .pic(pic),
         .rgb(rgb), .de_o(de_d), .hsync_o(hsync_d), .vsync_o(vsync_d)

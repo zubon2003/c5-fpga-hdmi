@@ -7,6 +7,8 @@
 //        byte and bits 31..16 the signed vid it produced (51 us)
 //   'T'  status: 32 bytes of the status input (video_in), little endian
 //   'G'  chroma debug: 4096 32-bit words of the chroma stage (see chroma.v)
+//   'R'  settings: 8 bytes of the settings input (top.v), so a host can
+//        read back what the UART keys set
 // Reply: "IQL", the mode letter, the byte count (u32 LE), then the bytes in
 // time order. Bytes are spaced GAP clocks apart: the Dock's BL616 USB-UART
 // bridge forwards only ~27 kB/s and silently drops the rest of a 1 Mbaud
@@ -27,6 +29,7 @@ module iq_la #(
     input  wire [13:0]  fm_vid,
     input  wire [7:0]   fm_sym,
     input  wire [255:0] status,
+    input  wire [63:0]  settings,
     input  wire         g_valid,
     input  wire [31:0]  g_word,
     input  wire         rx_valid,
@@ -49,6 +52,7 @@ module iq_la #(
     reg [2:0] state;
     reg [1:0] mode;          // 0 raw, 1 symbols, 2 both / chroma debug, 3 status
     reg       g_mode;        // mode 2 stores the chroma debug words
+    reg       r_mode;        // mode 3 sends the settings ('R') instead of the status
     reg [255:0] st;
     reg [4:0]   st_i;
     reg [2:0] idx;           // header byte or byte within a word
@@ -66,8 +70,8 @@ module iq_la #(
             3'd0: hdr_byte = "I";
             3'd1: hdr_byte = "Q";
             3'd2: hdr_byte = "L";
-            3'd3: hdr_byte = (m == 2'd1) ? "S" : (m == 2'd2) ? (g_mode ? "G" : "B") : (m == 2'd3) ? "T" : "C";
-            3'd4: hdr_byte = (m == 2'd3) ? 8'd32 : BYTES[7:0];
+            3'd3: hdr_byte = (m == 2'd1) ? "S" : (m == 2'd2) ? (g_mode ? "G" : "B") : (m == 2'd3) ? (r_mode ? "R" : "T") : "C";
+            3'd4: hdr_byte = (m == 2'd3) ? (r_mode ? 8'd8 : 8'd32) : BYTES[7:0];
             3'd5: hdr_byte = (m == 2'd3) ? 8'd0  : BYTES[15:8];
             3'd6: hdr_byte = (m == 2'd3) ? 8'd0  : BYTES[23:16];
             default: hdr_byte = (m == 2'd3) ? 8'd0 : BYTES[31:24];
@@ -91,12 +95,13 @@ module iq_la #(
         if (rst) begin
             state <= S_IDLE;
         end else case (state)
-            S_IDLE: if (rx_valid && rx_data == "T") begin
-                mode  <= 2'd3;
-                st    <= status;
-                st_i  <= 0;
-                idx   <= 0;
-                state <= S_HDR;
+            S_IDLE: if (rx_valid && (rx_data == "T" || rx_data == "R")) begin
+                mode   <= 2'd3;
+                r_mode <= (rx_data == "R");
+                st     <= (rx_data == "R") ? {192'd0, settings} : status;
+                st_i   <= 0;
+                idx    <= 0;
+                state  <= S_HDR;
             end else if (rx_valid && (rx_data == "C" || rx_data == "S" || rx_data == "B" || rx_data == "G")) begin
                 mode     <= (rx_data == "S") ? 2'd1 : (rx_data == "B" || rx_data == "G") ? 2'd2 : 2'd0;
                 g_mode   <= (rx_data == "G");
@@ -150,7 +155,7 @@ module iq_la #(
                 tx_data  <= st[st_i * 8 +: 8];
                 tx_valid <= 1'b1;
                 st_i     <= st_i + 5'd1;
-                if (st_i == 5'd31) state <= S_IDLE;
+                if (st_i == (r_mode ? 5'd7 : 5'd31)) state <= S_IDLE;
             end
             S_RD: begin   // allow for BSRAM read latency
                 wait_cnt <= wait_cnt + 2'd1;

@@ -45,6 +45,7 @@ module display (
     input  wire               pic_mode,
     input  wire               ar43,
     input  wire               parity,
+    input  wire               bypass,       // genlock on: 24-line ring written by video_in (top.v)
     input  wire               color_on,
     input  wire               v_inv,
     input  wire [3:0]         sat,          // colour gain in quarters (4 = 1x)
@@ -123,8 +124,13 @@ module display (
     wire [10:0] px_last  = ar43 ? 11'd479 : 11'd639;
     wire [10:0] px_ahead = {1'b0, xp[10:1]} + 11'd1;
     wire [9:0]  px_rd    = (px_ahead > px_last) ? px_last[9:0] : px_ahead[9:0];
-    wire [2:0]  slot = x[0] ? line_b[2:0] : line_a[2:0];   // 8-line output ring (sdram_fb)
-    always @(*) pic_addr = {slot, 9'd0} + {slot, 7'd0} + {5'd0, px_rd};   // slot * 640 + px
+    // Output ring: 8 lines from sdram_fb, or 24 lines straight from video_in
+    // when the output is genlocked (SDRAM bypass; slot = line mod 24).
+    wire [7:0]  line_s = x[0] ? line_b : line_a;
+    wire [7:0]  line_q = line_s / 8'd24;
+    wire [4:0]  slot24 = line_s - {line_q[4:0], 3'd0} - {line_q[3:0], 4'd0};
+    wire [4:0]  slot = bypass ? slot24 : {2'd0, line_s[2:0]};
+    always @(*) pic_addr = {slot, 9'd0} + {2'd0, slot, 7'd0} + {5'd0, px_rd};   // slot * 640 + px
 
     // ---- channel OSD: change detection, once per frame ----
     reg [15:0] on_s1, on_s2, on_prev, on_shown;
