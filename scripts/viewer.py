@@ -10,6 +10,8 @@ Window keys (sent to the FPGA as they are):
     a / z colour saturation +/- 0.25x  [ / ] hue -/+ 11.25 degrees
     m FM demodulator mode 0..3 (0 adjacent, 1 fast PLL, 2 PLL, 3 slow PLL)
     A picture 4:3 (black pillars, power-up) / 16:9 stretch
+    g output genlock: off (power-up, SDRAM field store) / porch lines / pixel clock
+    K SDRAM read timing test   k invert the SDRAM clock and test
     s save a snapshot now (captures/snap_<time>.png)         q quit
     r start / stop recording a video (captures/rec_<time>.mp4)
 
@@ -43,9 +45,9 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 CAP_DIR = os.path.join(ROOT, "captures")
 CMD_FILE = os.path.join(CAP_DIR, "viewer_cmd.txt")
 LOG_FILE = os.path.join(CAP_DIR, "viewer_log.txt")
-KEYS = "PWudhlfcvaz[]mAg"
+KEYS = "PWudhlfcvaz[]mAgKk"
 DEFAULTS = {"mode": "P", "first": 16, "act": 752, "f": 1, "c": 1, "v": 1, "sat": 4, "hue": 0, "fm": 1,
-            "ar43": 1, "gl": 0}   # as in src/top.v
+            "ar43": 1, "gl": 1}   # as in src/top.v
 
 
 def write_png(path, rgb, w=W, h=H):
@@ -197,15 +199,14 @@ class Viewer:
         w = struct.unpack("<16H", data[8:])
         sgn = lambda v: v - 0x4000 if v & 0x2000 else v      # 14-bit signed
         names = ["real_lines", "channel", "par1_fields|lvl_n", "out_jumps", "tip_f", "black_f", "freq_mhz", "vsync_det/0.8s",
-                 "gain", "h/0.8s", "synth_fields/0.8s", "fields/0.8s", "burst|B|/16", "nco_off", "|R|", "link_bytes|last"]
+                 "gain", "h/0.8s", "synth_fields/0.8s", "fields/0.8s", "burst|B|/16", "sdram", "|R|", "pclk/12.4ms"]
         vals = list(w)
         vals[1] = (bytes([vals[1] >> 8, vals[1] & 255]).decode("ascii", "replace")
                    if vals[1] >> 8 else "--")         # receiver link: channel name
         for k in (4, 5):
             vals[k] = sgn(vals[k])
-        vals[13] = vals[13] - 0x10000 if vals[13] & 0x8000 else vals[13]
+        vals[13] = f"{vals[13]:#06x}"                      # sdram_fb status (src/sdram_fb.v)
         vals[2] = f"{vals[2] >> 5}|{vals[2] & 31}"
-        vals[15] = f"{vals[15] >> 8}|{vals[15] & 255:#04x}"
         vals[12] = f"{vals[12] & 0x7fff} colour={'on' if vals[12] & 0x8000 else 'KILLED'}"
         self.log("status " + " ".join(f"{n}={v}" for n, v in zip(names, vals)))
 

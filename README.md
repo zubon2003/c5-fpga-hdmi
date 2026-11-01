@@ -10,8 +10,9 @@
 Analog 5.8 GHz FPV video (FM, NTSC) received by an ESP32-C5 running
 [C5VRX](https://github.com/Twotoz/C5VRX), demodulated on a Sipeed
 **Tang Primer 25K** FPGA and shown in colour on an HDMI monitor at
-**1280×720p, ~60 Hz** (a 4:3 picture, 960×720 with black pillars, or
-stretched to 16:9).
+**1280×720p, 59.94 Hz** (CEA 720p frame timing; a 4:3 picture, 960×720 with
+black pillars, or stretched to 16:9). An SDRAM field store lets the HDMI
+output run on a fixed pixel clock, which HDZero goggles need.
 
 The C5VRX-5 firmware already puts the radio's raw 4-bit IQ samples
 (MODEM_DIAG Q4/I4) on eight GPIO pins. The FPGA taps those pins in
@@ -44,11 +45,12 @@ patched v5.0.523 (see [C5VRX version](#c5vrx-version)).
 |---|---|
 | Seeed XIAO ESP32-C5 | running C5VRX-5 (see below) |
 | Sipeed Tang Primer 25K + Tang Primer 25K Dock | GW5A-LV25MG121 |
-| Sipeed PMOD DVI (HDMI) module | on Dock PMOD **J6** |
+| Sipeed PMOD DVI (HDMI) module | on Dock PMOD **J5** (middle) |
+| Sipeed Tang SDRAM module (32 MB, 16 bit) | on the Dock's 40-pin header **J3**; field store (`src/sdram_fb.v`) |
 | HDMI monitor or capture device | 720p input |
 | 9 jumper wires (8 signals + GND), short | XIAO → Dock PMOD **J4** |
 | Analog 5.8 GHz VTX (NTSC) | tested on F3 (5780 MHz) |
-| Optional: 2 more jumper wires | XIAO D4/D5 → Dock PMOD **J5**, for the Dock buttons (band / channel) and the on-screen channel; needs the modified C5 firmware below |
+| Optional: USB-A plug (breakout) + 3 wires | XIAO D4/D5 → Dock USB-A host port **J13**, for the Dock buttons (band / channel) and the on-screen channel; needs the modified C5 firmware below |
 
 ### C5VRX version
 
@@ -116,23 +118,36 @@ column odd pins). Find pin 1 with a meter (+3.3 V) before wiring.
   over their own USB. A common ground is required.
 - Keep the wires short (under ~10 cm): the IQ bits change at 80 MHz.
 - The three I bits on the XIAO's back-side JTAG pads need soldering.
-- The PMOD DVI goes on **J6**.
+- The PMOD DVI goes on **J5** (the middle PMOD; J6 until 2026-11-01).
 
-Optional receiver link (modified C5 firmware only), Dock PMOD **J5**
-(same pin numbering as J4):
+The SDRAM module plugs into the Dock's 40-pin header J3 (pins as in
+Sipeed's TangPrimer-25K-example `nestang-25k`). Every picture goes
+through it, so the module is required.
 
-| J5 pin | FPGA ball | Signal | XIAO pin | ESP32-C5 GPIO |
+Optional receiver link (modified C5 firmware only), through the Dock's
+USB-A host port **J13** (a USB-A plug breakout; the port's D+ / D- go to
+FPGA balls L6 / K6 through 0 Ω, with 15 kΩ to GND on both; the link is a
+plain 115200 baud UART on those wires, not USB):
+
+| USB-A pin | FPGA ball | Signal | XIAO pin | ESP32-C5 GPIO |
 |---|---|---|---|---|
-| 5 | L5 | FPGA TX → C5 RX | D5 | 24 |
-| 6 | K5 | C5 TX → FPGA RX | D4 | 23 |
+| 2 (D−) | K6 | C5 TX → FPGA RX | D4 | 23 |
+| 3 (D+) | L6 | FPGA TX → C5 RX | D5 | 24 |
+| 4 (GND) | – | ground | GND | – |
+| 1 (VBUS) | – | Dock +5 V | not connected | – |
 
-Remove the DAC resistors from D4/D5 if the XIAO had the resistor DAC.
+Leave VBUS unconnected while the XIAO is powered from its own USB (its
+5V pin is that USB's VBUS). Remove the DAC resistors from D4/D5 if the
+XIAO had the resistor DAC. Tested 2026-11-01: the channel reports arrive
+(`E1 5705`); the first build had D+ / D− the other way round and got
+nothing.
 
 ## Programming
 
-A prebuilt bitstream is attached to the
-[GitHub release](../../releases) (`c5_fpga_hdmi.fs` for the Gowin
-Programmer, `c5_fpga_hdmi.bin` for other loaders).
+Prebuilt bitstreams are attached to the
+[GitHub releases](../../releases) (`c5_fpga_hdmi.fs` for the Gowin
+Programmer, `c5_fpga_hdmi.bin` for other loaders). Releases up to v0.2.0
+are the earlier design: no SDRAM, PMOD DVI on J6, receiver link on J5.
 
 With the Gowin Programmer (Education edition, no licence needed), device
 **GW5A-25A / GW5A-LV25MG121NC1/I0**:
@@ -159,9 +174,18 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 ## Use
 
 Power the XIAO (C5VRX-5 on the VTX channel) and the Dock, plug in HDMI.
-With a VTX on, the picture appears within a second; without one the output
-free-runs at ~59.9 Hz. The small square at the top right of the picture is
-green while horizontal sync is found, red otherwise.
+The HDMI output is always 1280×720 at 59.94 Hz (59.945); with a VTX on, the picture
+appears within a second, without one the picture area shows noise. The
+small square at the top right of the picture is green while horizontal
+sync is found, red otherwise.
+
+Latency: with genlock off (power-up), the HDMI output runs on its own
+clock and shows fields from the SDRAM field store. The added delay is
+between about 0.5 ms and one field (16.7 ms), about 8 ms on average; it
+drifts slowly as the output and the input clocks differ, and steps back
+by one field every few minutes (one field is dropped or shown twice).
+The genlock modes (`g`) lock the output to the input instead, but HDZero
+goggles cannot follow the timing changes they make.
 
 With the receiver link: the Dock key on H11 steps the band, the key on
 H10 the channel (R, A, B, E, F, L; 1..8). The new channel name (e.g. `F3`)
@@ -182,8 +206,10 @@ characters change settings at run time (they reset at power-off):
 | `[` / `]` | hue −/+ 11.25° |
 | `m` | FM demodulator mode: 0 adjacent, 1 PLL fast (power-up), 2 PLL, 3 PLL slow |
 | `A` | picture 4:3 (960×720 with black pillars, power-up) / stretched to 16:9 |
-| `g` | output genlock: pixel clock (power-up) / off (picture rolls) / porch lines |
-| `T` | status packet (sync, levels, colour lock, receiver channel) |
+| `g` | output genlock, in turn: off (power-up; fixed 74.18 MHz pixel clock, SDRAM field store) → porch lines → pixel clock (PLL phase steps) → off |
+| `K` | SDRAM read timing test (result in `T` word 13) |
+| `k` | invert the SDRAM clock, then run the test |
+| `T` | status packet (sync, levels, colour lock, receiver channel, SDRAM status, pixel clock meter) |
 | `C` `S` `B` `G` | logic-analyser captures (raw IQ, symbols, FM output, chroma) |
 
 `scripts/viewer.py` shows the HDMI output through a UVC capture device,
@@ -211,17 +237,21 @@ Tang Primer 25K
   fm_demod           amplitude-gated PLL (or adjacent difference), 22-tap boxcar
   video_in           sync separator (hysteresis, pulse widths, flywheel),
                      field / parity, black and white levels from porch and
-                     sync depth, 640 pixels per line into a 32-line ring
+                     sync depth, 640 pixels per line into an 8-line ring
+  sdram_fb           field store in the SDRAM module: 4 field buffers;
+                     input ring → SDRAM → 8-line output ring, so the
+                     output does not have to follow the input
   chroma             3.58 MHz NCO frequency-locked to the burst, burst
                      reference averaged over lines (hue + ACC), 1.6 µs
                      chroma low-pass, two-line chroma average
   display            240 → 720 lines with vertical interpolation (field 2
                      placed 1.5 rows lower), BT.601 RGB
-  video_timing       1280×720, always 750 lines of 1631 pixels at
-                     73.33 MHz; locked to the input field by moving the
-                     pixel clock (PI loop driving dynamic phase steps of
-                     a second PLL), so the HDMI timing never changes
-  TMDS / OSER10      → PMOD DVI (J6)
+  video_timing       CEA 1280×720p timing, 1650 × 750 at 74.1818 MHz
+                     (59.945 Hz; two PLLs in a row), free-running by default; the
+                     optional genlock moves the pixel clock (PI loop
+                     driving dynamic phase steps of the second PLL) or the
+                     porch line lengths
+  TMDS / OSER10      → PMOD DVI (J5)
 ```
 
 Notes from bring-up:
@@ -233,18 +263,25 @@ Notes from bring-up:
   the picture on the capture card. Changing only the vertical front porch
   lines suited monitors and the capture card, but HDZero goggles (HDMI in)
   showed white and re-synced on every change, even BASE ± 1 for whole
-  frames. The pixel clock now follows the input instead: the HDMI PLL's
-  output takes 1/8-VCO-period phase steps (113.6 ps), about 1.3 million a
-  second for the usual 150 ppm offset. This needs an integer output
-  divider; with the fractional 3.625 used before, the phase wrapped after
-  three VCO periods and the steps did not change the frequency at all.
+  frames. Moving the pixel clock instead (1/8-VCO-period PLL phase steps,
+  112.3 ps now; this needs an integer output divider, with the fractional
+  3.625 used before the phase wrapped after three VCO periods and the
+  steps did not change the frequency) also turned the goggles white. So
+  the output now runs on a fixed clock and the SDRAM field store takes up
+  the difference (genlock off at power-up).
+- HDZero goggles from firmware 9.6.0-rc1 show black for a non-standard
+  1631 × 750 frame at 73.33 MHz (the earlier timing), hence the standard
+  1650 × 750 frame (at 74.1818 MHz, 81 ppm above the CEA 74.1758 MHz). A
+  fractional PLL multiplier gave no picture at all, so two PLLs with integer
+  multipliers run in a row (`src/pll.v`).
 - Sharp horizontal edges (OSD text) still move by about a line between
-  fields: each field is shown on its own (bob). Removing that needs a
-  field store, i.e. external SDRAM.
+  fields: each field is shown on its own (bob). The field store keeps the
+  previous fields, but combining two fields (weave) is not done yet.
 - After reprogramming, the capture card used during development sometimes
   stayed black until the display mode was switched once (`W`, then `P`).
 
-Resources: about 5,000 LUTs, 49 of 56 BSRAM, 15 DSP blocks.
+Resources: about 4,900 LUTs (7,800 logic cells with ALUs), 33 of 56 BSRAM,
+72 % of the DSP blocks, 2 of 6 PLLs.
 
 A detailed development log (Japanese) is in
 [docs/DEVLOG.ja.md](docs/DEVLOG.ja.md).
@@ -283,7 +320,7 @@ derivative is not an official C5VRX release.
 - [fpvdec / 5G8atv-rf-hackrf-decoder](https://github.com/zubon2003/5G8atv-rf-hackrf-decoder)
   (GPL-3.0-only), based on GOROman's
   [famicom-rf-hackrf-decoder](https://github.com/GOROman/famicom-rf-hackrf-decoder) (MIT).
-- Tang Primer 25K Dock PMOD / HDMI pin locations and PLL settings follow
-  Sipeed's [TangPrimer-25K-example](https://github.com/sipeed/TangPrimer-25K-example)
-  (`hdmi/svo`, commit 27c1737) and the Dock schematic; the HDL here is newly
-  written.
+- Tang Primer 25K Dock PMOD / HDMI / SDRAM pin locations and PLL settings
+  follow Sipeed's [TangPrimer-25K-example](https://github.com/sipeed/TangPrimer-25K-example)
+  (`hdmi/svo` and `nestang-25k`, commit 27c1737) and the Dock schematic; the
+  HDL here is newly written.

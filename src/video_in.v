@@ -30,12 +30,11 @@
 // Pixels: from act (default 9.4 us) after the sync edge over 53.3 us,
 // 640 per line, 12 per 80 samples (12 MS/s), or with ar43 (4:3 picture)
 // 480, 9 per 80 samples (9 MS/s; Nyquist 4.5 MHz, above the 3.64 MHz
-// first null of the demodulator's boxcar). Written to a 32-line ring as
+// first null of the demodulator's boxcar). Written to an 8-line ring as
 // {Y, C}: Y 8-bit luma, C signed 8-bit U on even and V on odd pixels;
-// address = (active line mod 32) * 640 + pixel. 16 lines were too few: the
-// 720p output uses 66.75 us per field line against 63.56 us coming in, so
-// by the bottom it trails by ~12 lines plus its start and interpolation
-// look-ahead (seen as doubled OSD text in the lowest ~100 rows).
+// address = (active line mod 8) * 640 + pixel. At the next line start
+// ln_done / ln_idx hand the line to sdram_fb, which copies it within
+// ~8 us (the ring was 32 lines while the output read it directly).
 module video_in (
     input  wire               clk,
     input  wire               rst,
@@ -49,6 +48,8 @@ module video_in (
     output reg  [14:0]        waddr,
     output reg  [15:0]        wdata,
     output reg                field_tg,     // toggles when active line 2 is written
+    output reg                ln_done,      // pulse: active line ln_idx is complete
+    output reg  [7:0]         ln_idx,
     output reg                field_real,   // this field started at a real vertical sync after a field with real lines
     output reg                parity,
     output reg  [15:0]        real_lines,   // real H line starts per field, for display
@@ -360,6 +361,10 @@ module video_in (
     wire [12:0] rel_r = (relr24 > 24'd8191) ? 13'd8191 : relr24[12:0];
     reg  [9:0]  idx_n;
     reg         active;
+    always @(posedge clk) begin
+        ln_done <= line_ev && active && !rst;
+        ln_idx  <= idx_n[7:0];
+    end
     always @(posedge clk) if (line_ev) begin
         active <= (n >= first) && (n < first + 10'd240);
         idx_n  <= n - first;
@@ -527,7 +532,7 @@ module video_in (
     always @(posedge clk) begin
         we <= n_v;
         if (n_v) begin
-            waddr <= {idx_n[4:0], 9'd0} + {2'd0, idx_n[4:0], 7'd0} + {5'd0, n_px};   // slot * 640 + px
+            waddr <= {idx_n[2:0], 9'd0} + {idx_n[2:0], 7'd0} + {5'd0, n_px};   // slot * 640 + px
             if (n_prod < 0)                    wdata[15:8] <= 8'd0;
             else if (n_prod[28:12] > 17'd255)  wdata[15:8] <= 8'd255;
             else                               wdata[15:8] <= n_prod[19:12];

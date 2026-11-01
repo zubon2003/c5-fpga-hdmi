@@ -4,8 +4,6 @@
 
 IO_LOC "clk" E2;
 IO_PORT "clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE BANK_VCCIO=3.3;
-IO_LOC "led" L6;
-IO_PORT "led" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
 
 // Debugger (BL616) UART, COM4 on the PC.
 IO_LOC "uart_tx" C3;
@@ -32,12 +30,14 @@ IO_PORT "iq[5]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 IO_PORT "iq[6]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 IO_PORT "iq[7]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 
-// J5: UART link to the XIAO (C5VRX-5 UART build). J5 pin numbers as J4;
-// the J5 pin order is taken from Sipeed's three-port HDMI example.
-IO_LOC "link_tx" L5;                  // J5 pin 5 -> XIAO D5 (GPIO24, C5 RX)
+// UART link to the XIAO (C5VRX-5 UART build) through the Dock's USB-A host
+// port J13, wired from a USB-A plug to XIAO D4 / D5 (plain UART on D+ / D-,
+// not USB; 0R in series, 15k to GND on both). Checked on the board
+// 2026-11-01: the C5's TX arrives on D- (K6).
+IO_LOC "link_tx" L6;                  // J13 D+ (pin 3) -> XIAO D5 (GPIO24, C5 RX)
 IO_PORT "link_tx" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
-IO_LOC "link_rx" K5;                  // J5 pin 6 <- XIAO D4 (GPIO23, C5 TX)
-IO_PORT "link_rx" IO_TYPE=LVCMOS33 PULL_MODE=UP BANK_VCCIO=3.3;
+IO_LOC "link_rx" K6;                  // J13 D- (pin 2) <- XIAO D4 (GPIO23, C5 TX)
+IO_PORT "link_rx" IO_TYPE=LVCMOS33 PULL_MODE=NONE BANK_VCCIO=3.3;
 // Dock keys (H11, H10 as KEY[0..1] in public Dock constraints, pull-down,
 // pressed = high); c5_link learns the resting level anyway.
 IO_LOC "btn[0]" H11;                  // next band
@@ -45,12 +45,92 @@ IO_PORT "btn[0]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 IO_LOC "btn[1]" H10;                  // next channel
 IO_PORT "btn[1]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 
-// J6: PMOD DVI.
-IO_LOC "tmds_d_p[0]" H8,H7;
+// J5 (middle PMOD): PMOD DVI. Same PMOD pin order as on J6 (pin 5/6 clock,
+// 7/8 D0, 9/10 D1, 11/12 D2; A = P). J6 had H5,J5 / H8,H7 / G7,G8 / F5,G5.
+IO_LOC "tmds_d_p[0]" K11,L11;
 IO_PORT "tmds_d_p[0]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
-IO_LOC "tmds_d_p[1]" G7,G8;
+IO_LOC "tmds_d_p[1]" E11,E10;
 IO_PORT "tmds_d_p[1]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
-IO_LOC "tmds_d_p[2]" F5,G5;
+IO_LOC "tmds_d_p[2]" A11,A10;
 IO_PORT "tmds_d_p[2]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
-IO_LOC "tmds_clk_p" H5,J5;
+IO_LOC "tmds_clk_p" L5,K5;
 IO_PORT "tmds_clk_p" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+
+// Tang SDRAM module on the Dock 40-pin header (pins from Sipeed's
+// TangPrimer-25K-example nestang-25k/src/nestang.cst).
+IO_LOC "O_sdram_clk" E3;
+IO_LOC "O_sdram_cs_n" K9;
+IO_LOC "O_sdram_ras_n" L10;
+IO_LOC "O_sdram_cas_n" K10;
+IO_LOC "O_sdram_wen_n" J7;
+IO_LOC "O_sdram_ba[0]" L9;
+IO_LOC "O_sdram_ba[1]" K8;
+IO_LOC "O_sdram_dqm[0]" L8;
+IO_LOC "O_sdram_dqm[1]" L7;
+IO_LOC "O_sdram_addr[0]" F6;
+IO_LOC "O_sdram_addr[1]" F7;
+IO_LOC "O_sdram_addr[2]" J10;
+IO_LOC "O_sdram_addr[3]" J11;
+IO_LOC "O_sdram_addr[4]" K7;
+IO_LOC "O_sdram_addr[5]" H2;
+IO_LOC "O_sdram_addr[6]" H1;
+IO_LOC "O_sdram_addr[7]" H4;
+IO_LOC "O_sdram_addr[8]" G4;
+IO_LOC "O_sdram_addr[9]" J2;
+IO_LOC "O_sdram_addr[10]" J8;
+IO_LOC "O_sdram_addr[11]" J1;
+IO_LOC "O_sdram_addr[12]" D1;
+IO_LOC "IO_sdram_dq[0]" K2;
+IO_LOC "IO_sdram_dq[1]" K1;
+IO_LOC "IO_sdram_dq[2]" L1;
+IO_LOC "IO_sdram_dq[3]" L2;
+IO_LOC "IO_sdram_dq[4]" K4;
+IO_LOC "IO_sdram_dq[5]" J4;
+IO_LOC "IO_sdram_dq[6]" G1;
+IO_LOC "IO_sdram_dq[7]" G2;
+IO_LOC "IO_sdram_dq[8]" E1;
+IO_LOC "IO_sdram_dq[9]" A1;
+IO_LOC "IO_sdram_dq[10]" F2;
+IO_LOC "IO_sdram_dq[11]" F1;
+IO_LOC "IO_sdram_dq[12]" B2;
+IO_LOC "IO_sdram_dq[13]" C2;
+IO_LOC "IO_sdram_dq[14]" L4;
+IO_LOC "IO_sdram_dq[15]" L3;
+IO_PORT "O_sdram_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_cs_n" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_ras_n" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_cas_n" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_wen_n" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_ba[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_ba[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_dqm[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_dqm[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[5]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[6]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[7]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[8]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[9]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[10]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[11]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "O_sdram_addr[12]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[5]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[6]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[7]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[8]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[9]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[10]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[11]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[12]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[13]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[14]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "IO_sdram_dq[15]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;

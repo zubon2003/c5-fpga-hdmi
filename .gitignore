@@ -2,3 +2,4 @@ impl/
 *.gprj.user
 captures/
 __pycache__/
+flash_*.log

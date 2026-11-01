@@ -10,7 +10,7 @@
 // the input was ready (the first version) made frames 752..754 lines long;
 // the capture card took that, but an HDMI monitor did not show the picture.
 // Now the line count stays 750 and the line length moves instead:
-//   BASE = 1631 pixels at 73.33 MHz: 59.95 Hz, close to the input;
+//   BASE = 1650 pixels at 74.1818 MHz: 59.945 Hz, about the input's 59.94;
 //   E pixels per frame (|E| <= 750) go into the five vertical front porch
 //   lines (720..724, just before vsync), E / 5 each; all other lines are
 //   exactly BASE. Spreading E one pixel per line over the whole frame made
@@ -35,7 +35,7 @@ module video_timing (
     input  wire        rst,
     input  wire        go,            // pulse: input field ready
     input  wire        pclk,          // genlock by the pixel clock (below)
-    input  wire        free,          // genlock off: fixed 1631 x 750 frames
+    input  wire        free,          // genlock off: fixed 1650 x 750 frames
     output reg         ps_pulse,      // pclk: PLL CLKOUT0 phase steps
     output reg         ps_dir,
     output reg  [10:0] x,
@@ -47,10 +47,10 @@ module video_timing (
     output reg         line_start,
     output reg  [15:0] jumps          // re-acquisitions so far (status)
 );
-    localparam H_ACTIVE = 1280, H_SYNC = 40, H_BP = 227;     // front porch: the rest (84)
-    localparam [10:0] H_START = H_SYNC + H_BP;                // first picture pixel: 267
+    localparam H_ACTIVE = 1280, H_SYNC = 40, H_BP = 220;     // front porch: the rest (110), CEA 720p
+    localparam [10:0] H_START = H_SYNC + H_BP;                // first picture pixel: 260
     localparam V_ACTIVE = 720,  V_FP = 5,   V_SYNC = 5,  V_BP = 20;
-    localparam [10:0] BASE    = 11'd1631;
+    localparam [10:0] BASE    = 11'd1650;
     localparam [9:0]  V_TOTAL = V_ACTIVE + V_FP + V_SYNC + V_BP;   // 750
     localparam [9:0]  TARGET  = 10'd745;     // go 5 lines before the frame starts
     localparam [9:0]  JUMP    = 10'd8;
@@ -73,11 +73,20 @@ module video_timing (
     reg [2:0]  ph;                           // pipeline stage valid bits
     reg signed [10:0] dv;
     reg signed [22:0] p_px;
+    reg signed [22:0] p_prev;                // the field before (pclk)
     wire signed [10:0] dv_raw = $signed({1'b0, vc_go}) - $signed({1'b0, TARGET});
-    wire signed [18:0] e_w    = p_px >>> 4;
+    // pclk: the two fields of a frame reach `go` half a line apart, and
+    // that alternation made the pixel clock hop by ~100 ppm every field
+    // (HDZero goggles flickered white). There the phase is the mean of the
+    // last two fields and the gains are halved (e = p / 32, I += p / 512).
+    wire signed [23:0] p_avg  = ($signed({p_px[22], p_px}) + $signed({p_prev[22], p_prev})) >>> 1;
+    wire signed [18:0] e_w    = pclk ? p_avg >>> 5 : p_px >>> 4;
     wire signed [19:0] e_sum  = e_w + integ;
     wire signed [10:0] e_next = (e_sum > 20'sd750) ? 11'sd750 : (e_sum < -20'sd750) ? -11'sd750 : e_sum[10:0];
     wire signed [19:0] i_sum  = integ + (e_w >>> 4);
+    // Starting frequency: pclk runs the PLL ~81 ppm fast (pll.v), about
+    // E = 100 pixels per frame; kept over re-acquisitions.
+    wire signed [10:0] I0     = pclk ? 11'sd100 : 11'sd0;
     wire signed [10:0] i_next = (i_sum > 20'sd750) ? 11'sd750 : (i_sum < -20'sd750) ? -11'sd750 : i_sum[10:0];
     // Cheap test at the go itself: close enough to TARGET to stay locked?
     wire near = (vc >= TARGET - JUMP) && (vc <= TARGET + JUMP);
@@ -94,9 +103,9 @@ module video_timing (
     wire [9:0] vn = (vc == V_TOTAL - 1) ? 10'd0 : vc + 10'd1;
     // pclk: HDZero goggles re-acquire (flicker) on any change of a line
     // length, even BASE +- 1 for whole frames. Then every line stays BASE
-    // and E moves the pixel clock instead: E pixels per frame are E * 120
-    // dynamic phase steps of the TMDS clock (1/8 VCO period = 113.6 ps; a
-    // pixel is 5 * 3 VCO periods, pll.v), spread evenly over the frame.
+    // and E moves the pixel clock instead: E pixels per frame are E * 80
+    // dynamic phase steps of the TMDS clock (1/8 VCO period = 112.3 ps; a
+    // pixel is 5 * 2 VCO periods, pll.v), spread evenly over the frame.
     wire signed [11:0] h_next = $signed({1'b0, BASE}) - 12'sd1 +
                                 (pclk ? 11'sd0 :
                                  (vn >= 10'd720 && vn <= 10'd723) ? e_line :
@@ -105,13 +114,13 @@ module video_timing (
     always @(posedge clk) begin
         if (rst) begin
             hc <= 0; vc <= 0; h_last <= BASE - 11'd1;
-            e_frame <= 0; integ <= 0;
+            e_frame <= I0; integ <= I0;
             since_go <= 2'd3; locked <= 1'b0; jumps <= 0;
             ph <= 0; stray <= 1'b0;
         end else if (free) begin
             // fixed timing, no lock (key 'g'): the picture sits anywhere
             // and slowly rolls against the input
-            e_frame <= 0; integ <= 0; locked <= 1'b0; ph <= 0; stray <= 1'b0;
+            e_frame <= 0; integ <= I0; locked <= 1'b0; ph <= 0; stray <= 1'b0;
             since_go <= 2'd3;
             if (hc == BASE - 11'd1) begin
                 hc <= 0;
@@ -123,7 +132,9 @@ module video_timing (
         end else if (go && (!locked || (!near && stray))) begin
             // (re)acquire: move straight to the wanted position
             vc <= TARGET; hc <= 0; h_last <= BASE - 11'd1;
-            locked <= 1'b1; since_go <= 0; integ <= 0; e_frame <= 0;
+            locked <= 1'b1; since_go <= 0; p_prev <= 0;
+            if (!pclk) begin integ <= 0; e_frame <= 0; end
+            else       e_frame <= integ;
             jumps <= jumps + 16'd1;
             ph <= 0; stray <= 1'b0;
         end else begin
@@ -144,6 +155,7 @@ module video_timing (
             if (ph[2]) begin
                 e_frame <= e_next;           // takes effect from the next line
                 integ   <= i_next;
+                p_prev  <= p_px;
             end
             if (hc == h_last) begin
                 hc <= 0;
@@ -164,12 +176,15 @@ module video_timing (
         end
     end
 
-    // Phase step pulses: |E| * 120 per frame of BASE * 750 clocks, as a
+    // Phase step pulses: |E| * 80 per frame of BASE * 750 clocks, as a
     // rate accumulator; each step is 3 clocks high, 5 low.
     localparam [21:0] FRAME_PX = BASE * 750;
-    wire [10:0] e_abs = e_frame[10] ? -e_frame : e_frame;
-    reg  [21:0] n_st;                            // |E| * 120 <= 90000
-    always @(posedge clk) n_st <= {e_abs, 7'd0} - {e_abs, 3'd0};
+    // Only E > 0 is acted on: on the board PSDIR = 1 (decrease) moved the
+    // clock the same way as 0, so the steps can only slow it down. The PLL
+    // runs ~300 ppm fast (pll.v) and E stays positive in lock.
+    wire [10:0] e_pos = e_frame[10] ? 11'd0 : e_frame;
+    reg  [21:0] n_st;                            // E * 120 <= 90000
+    always @(posedge clk) n_st <= {e_pos, 7'd0} - {e_pos, 3'd0};
     reg  [21:0] ps_acc /* synthesis syn_dspstyle = "logic" */;
     reg  [3:0]  ps_owed;
     reg  [2:0]  ps_cnt;
@@ -186,7 +201,7 @@ module video_timing (
             end else if (ps_owed != 0 || ps_due) begin
                 ps_cnt   <= 3'd1;
                 ps_pulse <= 1'b1;
-                ps_dir   <= e_frame[10];     // E > 0: later edges (0 = increase)
+                ps_dir   <= 1'b0;            // increase: later edges
                 ps_owed  <= ps_owed + {3'd0, ps_due} - 4'd1;
             end
         end

@@ -2,13 +2,19 @@
 // VCO within 700..1400 MHz).
 //
 // pll: VCO = 50 / IDIV 1 * MDIV 27 = 1350 MHz
+//   CLKOUT0 = 1350 / 20.625 = 65.4545 MHz: reference for pll_hdmi
 //   CLKOUT1 = 1350 / 4 = 337.5 MHz: IQ input IDES8 fast clock (675 MS/s)
 //
-// pll_hdmi: VCO = 50 / IDIV 1 * MDIV 22 = 1100 MHz
-//   CLKOUT0 = 1100 / 3 = 366.67 MHz: TMDS fast clock (5 x 73.33 MHz pixel
-//             clock; OSER10 is DDR, so 733 Mbit/s per lane)
+// pll_hdmi: VCO = 65.4545 / IDIV 1 * MDIV 17 = 1112.73 MHz
+//   CLKOUT0 = 1112.73 / 3 = 370.91 MHz: TMDS fast clock (5 x 74.1818 MHz
+//             pixel clock, 81 ppm above CEA's 74.25 / 1.001 = 74.1758, so
+//             1650 x 750 frames at 59.945 Hz; OSER10 is DDR, so 742 Mbit/s
+//             per lane). HDZero goggles from
+//             9.6.0-rc1 show black for the earlier non-standard 1631 x 750
+//             at 73.33 MHz. A fractional MDIV (50 * 22.25 / 3) gave no
+//             picture at all, hence the two PLLs in a row.
 //   CLKOUT0 takes dynamic phase steps (psdir / pspulse, 1/8 VCO period =
-//   113.6 ps each, UG306 "Phase Shift") so the output follows the input
+//   112.3 ps each, UG306 "Phase Shift") so the output follows the input
 //   field rate without changing the HDMI timing (video_timing.v, pclk).
 //   ODIV0 must be an integer: the phase wraps after ODIV0 VCO periods, so
 //   with the old 3.625 divider the steps only went round a 3-period circle
@@ -17,6 +23,7 @@
 // TangPrimer-25K-example hdmi project; only the dividers differ.
 module pll (
     input  wire clkin,
+    output wire clkout0,
     output wire clkout1,
     output wire lock
 );
@@ -24,7 +31,7 @@ module pll (
 
     PLLA pll (
         .LOCK(lock),
-        .CLKOUT0(),
+        .CLKOUT0(clkout0),
         .CLKOUT1(clkout1), .CLKOUT2(), .CLKOUT3(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
         .CLKFBOUT(),
         .MDRDO(),
@@ -53,10 +60,10 @@ module pll (
     defparam pll.CLKFB_SEL = "INTERNAL";
     defparam pll.MDIV_SEL = 27;
     defparam pll.MDIV_FRAC_SEL = 0;
-    defparam pll.ODIV0_SEL = 4;
-    defparam pll.ODIV0_FRAC_SEL = 0;
+    defparam pll.ODIV0_SEL = 20;
+    defparam pll.ODIV0_FRAC_SEL = 5;     // + 5/8
     defparam pll.ODIV1_SEL = 4;
-    defparam pll.CLKOUT0_EN = "FALSE";
+    defparam pll.CLKOUT0_EN = "TRUE";
     defparam pll.CLKOUT1_EN = "TRUE";
     defparam pll.CLKOUT2_EN = "FALSE";
     defparam pll.CLKOUT3_EN = "FALSE";
@@ -120,11 +127,11 @@ module pll_hdmi (
         .MDWDI(8'b0)
     );
 
-    defparam pll.FCLKIN = "50";
+    defparam pll.FCLKIN = "65.455";
     defparam pll.IDIV_SEL = 1;
     defparam pll.FBDIV_SEL = 1;
     defparam pll.CLKFB_SEL = "INTERNAL";
-    defparam pll.MDIV_SEL = 22;
+    defparam pll.MDIV_SEL = 17;
     defparam pll.MDIV_FRAC_SEL = 0;
     defparam pll.ODIV0_SEL = 3;
     defparam pll.ODIV0_FRAC_SEL = 0;

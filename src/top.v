@@ -1,5 +1,5 @@
 // Tang Primer 25K Dock: C5 IQ -> FM demodulator, 1280x720p HDMI.
-//   J6 (PMOD DVI): HDMI out, waveform monitor and per-pin IQ activity bars
+//   J5 (PMOD DVI, middle PMOD): HDMI out, waveform monitor and per-pin IQ activity bars
 //   J4: the 8 IQ inputs from the XIAO ESP32-C5 (see top.cst)
 //   Debugger UART (COM4, 1 Mbaud): 'C' dumps raw 675 MS/s samples,
 //   'S' the resampled ~80 MS/s symbols, 'B' symbols with the FM output,
@@ -10,28 +10,41 @@
 //   'a' / 'z' colour saturation +/- 0.25x, '[' / ']' hue -/+ 11.25 degrees,
 //   'm' FM demodulator mode 0..3 (src/fm_demod.v; 1 at power-up),
 //   'A' picture 4:3 (960 x 720 with black pillars, power-up) / 16:9 stretch,
-//   'g' output genlock: pixel clock (power-up; fixed HDMI timing, PLL
-//   phase steps) / off (fixed timing, picture rolls) / porch lines
+//   'g' output genlock: off (power-up; the SDRAM field store decouples the
+//   output) / porch lines / pixel clock (PLL phase steps),
+//   'K' SDRAM read timing test, 'k' invert the SDRAM clock and test
+//   (sdram_fb.v; result in status word 13)
 module top (
     input  wire       clk,          // 50 MHz
-    output wire       led,
     input  wire [7:0] iq,           // PARLIO data-bit order: Q bits 0..3, I bits 4..7
     input  wire       uart_rx,
     output wire       uart_tx,
     input  wire [1:0] btn,          // Dock keys: [0] H11 band, [1] H10 channel (c5_link.v)
-    input  wire       link_rx,      // J5 pin 6 <- XIAO D4 (C5 GPIO23, UART build)
-    output wire       link_tx,      // J5 pin 5 -> XIAO D5 (C5 GPIO24)
+    input  wire       link_rx,      // USB-A J13 D- (K6) <- XIAO D4 (C5 GPIO23, UART build)
+    output wire       link_tx,      // USB-A J13 D+ (L6) -> XIAO D5 (C5 GPIO24)
 
     output wire       tmds_clk_p, tmds_clk_n,
-    output wire [2:0] tmds_d_p,   tmds_d_n
+    output wire [2:0] tmds_d_p,   tmds_d_n,
+
+    // Tang SDRAM module on the Dock 40-pin header
+    output wire        O_sdram_clk,
+    output wire        O_sdram_cs_n,
+    output wire        O_sdram_ras_n,
+    output wire        O_sdram_cas_n,
+    output wire        O_sdram_wen_n,
+    output wire [1:0]  O_sdram_ba,
+    output wire [12:0] O_sdram_addr,
+    output wire [1:0]  O_sdram_dqm,
+    inout  wire [15:0] IO_sdram_dq
 );
     wire clk_5x, clk_iq_fast, pll_lock, clk_pixel, clk_iq;
     wire lock_iq, lock_hdmi;
     assign pll_lock = lock_iq & lock_hdmi;
 
     wire ps_dir, ps_pulse;
-    pll u_pll (.clkin(clk), .clkout1(clk_iq_fast), .lock(lock_iq));
-    pll_hdmi u_pll_hdmi (.clkin(clk), .clkout0(clk_5x),
+    wire clk_ref;
+    pll u_pll (.clkin(clk), .clkout0(clk_ref), .clkout1(clk_iq_fast), .lock(lock_iq));
+    pll_hdmi u_pll_hdmi (.clkin(clk_ref), .clkout0(clk_5x),
                          .psdir(ps_dir), .pspulse(ps_pulse), .lock(lock_hdmi));
 
     // IQ domain: IDES8 at 337.5 MHz DDR, 8 samples per 84.375 MHz clock.
@@ -94,9 +107,37 @@ module top (
     c5_link u_link (.clk(clk_iq), .rst(rst_iq), .btn(btn), .rxd(link_rx), .txd(link_tx),
                     .ch_name(ch_name), .ch_mhz(ch_mhz), .reports(ch_reports),
                     .rx_edges(link_edges), .rx_bytes(link_bytes));
-    // word 15 (gc/4) carries the link's RX bytes | edges while the link is new
-    wire [255:0] la_status = {link_bytes, link_edges, vin_status[239:112], ch_mhz, vin_status[95:32],
-                              ch_name, vin_status[15:0]};
+    // Pixel clock meter: pixel clocks per 2^20 IQ clocks (12.43 ms), low 16
+    // bits (about 921,894 at 74.1818 MHz), with lock_hdmi as bit 15 of word 14's
+    // place... word 15 (was the link's RX bytes | edges).
+    reg  [23:0] pm_cnt = 24'd0;                       // pixel domain, Gray coded out
+    reg  [23:0] pm_gray = 24'd0;
+    always @(posedge clk_pixel) begin
+        pm_cnt  <= pm_cnt + 24'd1;
+        pm_gray <= (pm_cnt >> 1) ^ pm_cnt;
+    end
+    reg  [23:0] pm_g1, pm_g2;
+    reg  [19:0] pm_win = 20'd0;
+    reg  [23:0] pm_last;
+    reg  [15:0] pm_out = 16'd0;
+    integer gi;
+    reg  [23:0] pm_bin;
+    always @(*) begin
+        pm_bin[23] = pm_g2[23];
+        for (gi = 22; gi >= 0; gi = gi - 1) pm_bin[gi] = pm_bin[gi + 1] ^ pm_g2[gi];
+    end
+    always @(posedge clk_iq) begin
+        pm_g1  <= pm_gray;
+        pm_g2  <= pm_g1;
+        pm_win <= pm_win + 20'd1;
+        if (&pm_win) begin
+            pm_out  <= pm_bin[15:0] - pm_last[15:0];
+            pm_last <= pm_bin;
+        end
+    end
+    wire [15:0]  fb_status;    // from sdram_fb below, replaces word 13
+    wire [255:0] la_status = {pm_out, vin_status[239:224], fb_status, vin_status[207:112], ch_mhz,
+                              vin_status[95:32], ch_name, vin_status[15:0]};
     wire [15:0]  out_jumps;    // from video_timing below
     wire         cdbg_v;
     wire [31:0]  cdbg_w;
@@ -129,7 +170,13 @@ module top (
     reg [3:0]  sat         = 4'd4;     // 1x
     reg [4:0]  hue         = 5'd0;
     reg        ar43        = 1'b1;
-    reg [1:0]  gl_mode     = 2'd0;     // 0 pixel clock, 1 off, 2 porch lines
+    reg [1:0]  gl_mode     = 2'd1;     // 0 pixel clock, 1 off, 2 porch lines
+    reg        fb_recal    = 1'b0;
+    reg        fb_flip     = 1'b0;
+    always @(posedge clk_iq) begin
+        fb_recal <= rx_valid && rx_data == "K";
+        fb_flip  <= rx_valid && rx_data == "k";
+    end
     always @(posedge clk_iq) if (rx_valid) begin
         case (rx_data)
             "P": pic_mode_iq <= 1'b1;
@@ -156,12 +203,16 @@ module top (
     wire [14:0] lb_waddr;
     wire [15:0] lb_wdata;
     wire        field_tg, field_parity, field_real;
+    wire        ln_done;
+    wire [7:0]  ln_idx;
+    wire        fb_parity;     // parity of the field shown (sdram_fb)
     wire [15:0] real_lines, field_lines;
     video_in u_vin (
         .clk(clk_iq), .rst(rst_iq), .in_valid(fm_valid), .vid(fm_vid), .d(fm_d),
         .first(first_line), .act(act_start), .ar43(ar43),
         .we(lb_we), .waddr(lb_waddr), .wdata(lb_wdata),
-        .field_tg(field_tg), .parity(field_parity), .field_real(field_real),
+        .field_tg(field_tg), .ln_done(ln_done), .ln_idx(ln_idx),
+        .parity(field_parity), .field_real(field_real),
         .real_lines(real_lines), .field_lines(field_lines), .status(vin_status), .jumps(out_jumps),
         .cdbg_v(cdbg_v), .cdbg_w(cdbg_w)
     );
@@ -181,7 +232,7 @@ module top (
     always @(posedge clk_pixel) begin
         field_s  <= {field_s[1:0], field_tg};
         freal_s  <= {freal_s[0], field_real};
-        parity_s <= {parity_s[0], field_parity ^ par_inv};
+        parity_s <= {parity_s[0], fb_parity ^ par_inv};
         mode_s   <= {mode_s[0], pic_mode_iq};
         color_s  <= {color_s[0], color_on};
         vinv_s   <= {vinv_s[0], v_inv};
@@ -214,10 +265,52 @@ module top (
         .triggered(sc_trig)
     );
 
+    // ---- SDRAM field store ----
+    // Input ring (video_in) -> SDRAM -> output ring (display). Once per
+    // output line the pixel domain asks for the field lines the display
+    // needs next: lines 0..4 on the last line of a frame, then one more
+    // every 3 lines (a field line covers 3 output lines), up to 239. The
+    // output ring is 8 lines; at most ~6 are in use.
+    wire [12:0] ir_addr;
+    wire [15:0] ir_data;
+    line_buffer u_iring (
+        .wclk(clk_iq), .we(lb_we), .waddr(lb_waddr), .wdata(lb_wdata),
+        .rclk(clk_iq), .raddr({2'b00, ir_addr}), .rdata(ir_data)
+    );
+    reg        rq_tg = 1'b0, rq_frame = 1'b0;
+    reg [7:0]  rq_line = 8'd0;
+    reg [1:0]  rq_m3 = 2'd0;
+    always @(posedge clk_pixel) if (line_start) begin
+        rq_tg <= ~rq_tg;
+        if (y == 10'd749) begin
+            rq_frame <= 1'b1;
+            rq_line  <= 8'd4;
+            rq_m3    <= 2'd0;
+        end else begin
+            rq_frame <= 1'b0;
+            rq_m3    <= (rq_m3 == 2'd2) ? 2'd0 : rq_m3 + 2'd1;
+            if (rq_m3 == 2'd2 && rq_line != 8'd239) rq_line <= rq_line + 8'd1;
+        end
+    end
+    wire        or_we;
+    wire [12:0] or_addr;
+    wire [15:0] or_data;
+    sdram_fb u_fb (
+        .clk(clk_iq), .rst(rst_iq),
+        .sd_clk(O_sdram_clk), .sd_cs_n(O_sdram_cs_n), .sd_ras_n(O_sdram_ras_n),
+        .sd_cas_n(O_sdram_cas_n), .sd_we_n(O_sdram_wen_n), .sd_ba(O_sdram_ba),
+        .sd_addr(O_sdram_addr), .sd_dqm(O_sdram_dqm), .sd_dq(IO_sdram_dq),
+        .ln_done(ln_done), .ln_idx(ln_idx), .parity(field_parity),
+        .ir_addr(ir_addr), .ir_data(ir_data),
+        .or_we(or_we), .or_addr(or_addr), .or_data(or_data),
+        .req_tg(rq_tg), .req_frame(rq_frame), .req_line(rq_line), .rd_parity(fb_parity),
+        .recal(fb_recal), .flip_ck(fb_flip), .status(fb_status)
+    );
+
     wire [14:0] pic_addr;
     wire [15:0] pic;
-    line_buffer u_lbuf (
-        .wclk(clk_iq), .we(lb_we), .waddr(lb_waddr), .wdata(lb_wdata),
+    line_buffer u_oring (
+        .wclk(clk_iq), .we(or_we), .waddr({2'b00, or_addr}), .wdata(or_data),
         .rclk(clk_pixel), .raddr(pic_addr), .rdata(pic)
     );
 
@@ -242,9 +335,4 @@ module top (
     dvi_tx u_dvi (.clk_pixel(clk_pixel), .clk_5x(clk_5x), .rst(rst),
         .sym0(sym_b), .sym1(sym_g), .sym2(sym_r),
         .tmds_clk_p(tmds_clk_p), .tmds_clk_n(tmds_clk_n), .tmds_d_p(tmds_d_p), .tmds_d_n(tmds_d_n));
-
-    // Heartbeat ~1.6 Hz while the PLL is locked; solid on during a capture.
-    reg [23:0] blink = 24'd0;
-    always @(posedge clk_pixel) blink <= blink + 24'd1;
-    assign led = pll_lock & (blink[23] | la_busy);
 endmodule

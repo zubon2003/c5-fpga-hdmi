@@ -2,8 +2,8 @@
 // user buttons step the band and the channel, and the receiver's channel
 // reports are kept for the status packet (and later an on-screen display).
 //
-// Wire: 115200 8N1. FPGA TX -> XIAO D5 (C5 GPIO24), XIAO D4 (GPIO23) ->
-// FPGA RX. Keys sent: 'b' next band (KEY0, H11), 'c' next channel (KEY1,
+// Wire: 115200 8N1 on the Dock's USB-A host port pins (top.cst): FPGA TX
+// -> D+ -> XIAO D5 (C5 GPIO24), XIAO D4 (GPIO23) -> D- -> FPGA RX. Keys sent: 'b' next band (KEY0, H11), 'c' next channel (KEY1,
 // H10), one per press; '?' once after power-up for an immediate report.
 // The receiver answers "CH <name> <MHz>" plus CR LF on every change and
 // once a second.

@@ -1,4 +1,4 @@
-// 1280x720 status display, three pipeline stages (73.33 MHz pixel clock):
+// 1280x720 status display, three pipeline stages (74.18 MHz pixel clock):
 //   y 0..479    waveform monitor of one demodulated line (scope_line):
 //               1280 samples at 20 MS/s = 64 us across, 200 px = 10 us grid,
 //               y = 240 - vid * 3 / 16, so 38.4 px per MHz
@@ -123,8 +123,8 @@ module display (
     wire [10:0] px_last  = ar43 ? 11'd479 : 11'd639;
     wire [10:0] px_ahead = {1'b0, xp[10:1]} + 11'd1;
     wire [9:0]  px_rd    = (px_ahead > px_last) ? px_last[9:0] : px_ahead[9:0];
-    wire [4:0]  slot = x[0] ? line_b[4:0] : line_a[4:0];
-    always @(*) pic_addr = {slot, 9'd0} + {2'd0, slot, 7'd0} + {5'd0, px_rd};   // slot * 640 + px
+    wire [2:0]  slot = x[0] ? line_b[2:0] : line_a[2:0];   // 8-line output ring (sdram_fb)
+    always @(*) pic_addr = {slot, 9'd0} + {slot, 7'd0} + {5'd0, px_rd};   // slot * 640 + px
 
     // ---- channel OSD: change detection, once per frame ----
     reg [15:0] on_s1, on_s2, on_prev, on_shown;

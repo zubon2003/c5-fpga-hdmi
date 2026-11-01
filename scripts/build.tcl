@@ -4,6 +4,9 @@ set_option -top_module top
 set_option -output_base_name c5_fpga_hdmi
 set_option -use_cpu_as_gpio 1
 set_option -use_sspi_as_gpio 1
+set_option -use_i2c_as_gpio 1
+set_option -use_mspi_as_gpio 1
+set_option -use_ready_as_gpio 1
 add_file src/top.v
 add_file src/pll.v
 add_file src/video_timing.v
@@ -19,6 +22,7 @@ add_file src/scope_line.v
 add_file src/video_in.v
 add_file src/chroma.v
 add_file src/line_buffer.v
+add_file src/sdram_fb.v
 add_file src/top.cst
 add_file src/top.sdc
 run all
