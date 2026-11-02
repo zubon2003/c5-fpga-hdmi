@@ -5,7 +5,7 @@
 For each round and mode 0..3 (set with the viewer's 'fm' command): 'B' captures of the FPGA's own vid output, and
 from them the back porch noise, sync depth and video SNR as in
 scripts/measure.py (porch rms on a 100 IRE scale). Modes are interleaved
-so a changing signal affects them alike. Ends in mode 1 (power-up).
+so a changing signal affects them alike. Ends in mode 3 (power-up).
 """
 import argparse
 import os
@@ -56,7 +56,7 @@ def main():
                 vid = (w >> 16).astype(np.uint16).view(np.int16)
                 res[mode] += stats(vid)
         print(f"round {r + 1} done", flush=True)
-    measure.send("fm 1")
+    measure.send("fm 3")
     print("mode  name       pulses  porch MHz  sync MHz  SNR dB")
     for m in range(4):
         if not res[m]:

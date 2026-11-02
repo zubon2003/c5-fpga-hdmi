@@ -198,11 +198,15 @@ H10 the channel (R, A, B, E, F, L; 1..8). The new channel name (e.g. `F3`)
 appears at the top right for 3 seconds, and once at power-up.
 
 The Dock's USB debugger has a UART (the second COM port, 1 Mbaud). Single
-characters change settings at run time (they reset at power-off):
+characters change settings at run time. Except for `P` / `W`, they are saved
+in the configuration flash 2 s after the last change and come back at
+power-up (`src/cfg_flash.v`, last 4 KB sector, 0x7FF000; the `R` reply's
+last byte is the save status). Writing a new bitstream keeps them; the
+values marked power-up below apply when nothing has been saved:
 
 | Key | Action |
 |---|---|
-| `P` / `W` | picture (default) / waveform monitor of one demodulated line |
+| `P` / `W` | picture (power-up, not saved) / waveform monitor of one demodulated line |
 | `u` / `d` | first active line −/+ 1 |
 | `h` / `l` | picture start −/+ 0.2 µs |
 | `f` | field offset direction (interlace) |
@@ -210,7 +214,7 @@ characters change settings at run time (they reset at power-off):
 | `v` | V sign (hue) |
 | `a` / `z` | colour saturation +/− 0.25× |
 | `[` / `]` | hue −/+ 11.25° |
-| `m` | FM demodulator mode: 0 adjacent, 1 PLL fast (power-up), 2 PLL, 3 PLL slow |
+| `m` | FM demodulator mode: 0 adjacent, 1 PLL fast, 2 PLL, 3 PLL slow (power-up) |
 | `A` | picture 4:3 (960×720 with black pillars, power-up) / stretched to 16:9 |
 | `g` | output genlock, in turn: off (power-up; fixed 74.18 MHz pixel clock, SDRAM field store) → porch lines → pixel clock (PLL phase steps) → off. Both genlock modes bypass the SDRAM (low latency, no module needed) |
 | `K` | SDRAM read timing test (result in `T` word 13) |

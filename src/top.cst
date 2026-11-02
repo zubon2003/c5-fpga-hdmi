@@ -134,3 +134,18 @@ IO_PORT "IO_sdram_dq[12]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3
 IO_PORT "IO_sdram_dq[13]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
 IO_PORT "IO_sdram_dq[14]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
 IO_PORT "IO_sdram_dq[15]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+// Configuration flash on the core board (64 Mbit SPI NOR on the MSPI pins,
+// balls from Gowin's GW5A-25A MBGA121N device data), used by cfg_flash.v
+// for the saved settings; needs -use_mspi_as_gpio (scripts/build.tcl).
+IO_LOC "flash_cs_n" E6;               // MCS_N
+IO_LOC "flash_clk" E7;                // CCLK
+IO_LOC "flash_mosi" D6;               // MOSI (flash IO0)
+IO_LOC "flash_miso" E5;               // MISO (flash IO1)
+IO_LOC "flash_wp_n" D5;               // MI2 (flash IO2 / WP#), held high
+IO_LOC "flash_hold_n" E4;             // MI3 (flash IO3 / HOLD#), held high
+IO_PORT "flash_cs_n" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "flash_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "flash_mosi" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "flash_miso" IO_TYPE=LVCMOS33 PULL_MODE=UP BANK_VCCIO=3.3;
+IO_PORT "flash_wp_n" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8 BANK_VCCIO=3.3;
+IO_PORT "flash_hold_n" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8 BANK_VCCIO=3.3;

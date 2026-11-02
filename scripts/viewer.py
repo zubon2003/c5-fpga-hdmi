@@ -76,7 +76,7 @@ KEYS = "PWudhlfcvaz[]mAgKk"
 DEFAULT_DEVICE = "C8 USB3.0 Video"
 DEFAULT_PORT = "COM4"
 IQ_HZ = 84_375_000          # FPGA IQ clock; the 'T' pixel clock meter counts per 2^20 of them
-DEFAULTS = {"mode": "P", "first": 16, "act": 752, "f": 1, "c": 1, "v": 1, "sat": 4, "hue": 0, "fm": 1,
+DEFAULTS = {"mode": "P", "first": 16, "act": 752, "f": 1, "c": 1, "v": 1, "sat": 4, "hue": 0, "fm": 3,
             "ar43": 1, "gl": 1}   # as in src/top.v
 GL_ORDER = [1, 2, 0]        # 'g' steps off -> porch lines -> pixel clock -> off
 GL_NAMES = {0: "pixel clock (no SDRAM)", 1: "off (SDRAM)", 2: "porch lines (no SDRAM)"}
@@ -134,7 +134,7 @@ def decode_settings(data):
     return {"mode": "P" if b[0] & 1 else "W", "ar43": (b[0] >> 1) & 1, "gl": (b[0] >> 2) & 3,
             "fm": (b[0] >> 4) & 3, "c": (b[0] >> 6) & 1, "v": b[0] >> 7,
             "sat": b[1] & 15, "f": (b[1] >> 4) & 1, "hue": b[2] & 31, "first": b[3],
-            "act": (b[4] | b[5] << 8) & 0x1FFF}
+            "act": (b[4] | b[5] << 8) & 0x1FFF, "flash": b[7]}
 
 
 def status_line(s):

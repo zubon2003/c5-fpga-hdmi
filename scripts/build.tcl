@@ -23,6 +23,7 @@ add_file src/video_in.v
 add_file src/chroma.v
 add_file src/line_buffer.v
 add_file src/sdram_fb.v
+add_file src/cfg_flash.v
 add_file src/top.cst
 add_file src/top.sdc
 run all

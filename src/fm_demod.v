@@ -2,7 +2,7 @@
 //
 // mode 0, adjacent discriminator (the original):
 //   phase = LUT(I4, Q4), 1024 units per turn; d = phase - previous phase.
-// mode 1..3, amplitude-gated phase-locked loop (power-up mode 1, top.v):
+// mode 1..3, amplitude-gated phase-locked loop (power-up mode 3, top.v):
 //   theta and omega in 1/65536 turn; e = phase - (theta + omega) wrapped;
 //   the correction gain g (0, 1/4, 1/2, 3/4, 1) is |z|^2 of the symbol's
 //   cell against its slow average, so symbols near the origin (whose phase

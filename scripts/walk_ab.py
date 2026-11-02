@@ -9,7 +9,7 @@ independent), the sync status after the mode has run for a while (real
 lines per field, fields and synthesised fields per 0.8 s, output
 re-acquisitions during the visit) and the video SNR from 'B' captures of
 the FPGA's own vid output. Neighbouring rows of the two modes see nearly
-the same signal. Ctrl-C to stop; leaves the FPGA in mode 1 (power-up).
+the same signal. Ctrl-C to stop; leaves the FPGA in mode 3 (power-up).
 """
 import argparse
 import os
@@ -87,7 +87,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        measure.send("fm 1")
+        measure.send("fm 3")
 
 
 if __name__ == "__main__":

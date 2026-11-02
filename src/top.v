@@ -8,12 +8,13 @@
 //   'u' / 'd' first active line -/+ 1, 'h' / 'l' picture start -/+ 16 samples
 //   (0.2 us), 'f' field offset direction, 'c' colour on/off, 'v' V sign,
 //   'a' / 'z' colour saturation +/- 0.25x, '[' / ']' hue -/+ 11.25 degrees,
-//   'm' FM demodulator mode 0..3 (src/fm_demod.v; 1 at power-up),
+//   'm' FM demodulator mode 0..3 (src/fm_demod.v; 3 at power-up),
 //   'A' picture 4:3 (960 x 720 with black pillars, power-up) / 16:9 stretch,
 //   'g' output genlock: off (power-up; the SDRAM field store decouples the
 //   output) / porch lines / pixel clock (PLL phase steps),
 //   'K' SDRAM read timing test, 'k' invert the SDRAM clock and test,
-//   'R' read back the settings above (8 bytes, see `settings` below)
+//   'R' read back the settings above (8 bytes, see `settings` below);
+//   all but 'P' / 'W' are saved in the configuration flash (cfg_flash.v)
 //   (sdram_fb.v; result in status word 13)
 module top (
     input  wire       clk,          // 50 MHz
@@ -36,7 +37,15 @@ module top (
     output wire [1:0]  O_sdram_ba,
     output wire [12:0] O_sdram_addr,
     output wire [1:0]  O_sdram_dqm,
-    inout  wire [15:0] IO_sdram_dq
+    inout  wire [15:0] IO_sdram_dq,
+
+    // Configuration flash on the MSPI pins (cfg_flash.v)
+    output wire        flash_cs_n,
+    output wire        flash_clk,
+    output wire        flash_mosi,
+    input  wire        flash_miso,
+    output wire        flash_wp_n,
+    output wire        flash_hold_n
 );
     wire clk_5x, clk_iq_fast, pll_lock, clk_pixel, clk_iq;
     wire lock_iq, lock_hdmi;
@@ -90,7 +99,7 @@ module top (
         .sym_valid(sym_valid), .sym(sym), .early_cnt(early_cnt), .late_cnt(late_cnt)
     );
 
-    reg  [1:0]         fm_mode = 2'd1;      // PLL fast; set from the UART below
+    reg  [1:0]         fm_mode = 2'd3;      // PLL slow; set from the UART below
     wire               fm_valid;
     wire signed [13:0] fm_vid;
     wire [7:0]         fm_sym;
@@ -176,16 +185,40 @@ module top (
     wire       bypass      = (gl_mode != 2'd1);   // genlock on: no SDRAM (below)
     // Settings read back with 'R' (iq_la.v): byte 0 {v_inv, color_on,
     // fm_mode, gl_mode, ar43, picture}, 1 {par_inv, sat}, 2 hue, 3 first
-    // line, 4..5 picture start (act), 6 layout version (1), 7 zero.
-    assign settings = {8'd0, 8'd1, 3'd0, act_start, first_line[7:0], 3'd0, hue,
+    // line, 4..5 picture start (act), 6 layout version (1), 7 flash status
+    // (cfg_flash.v).
+    wire [7:0] cfg_status;
+    assign settings = {cfg_status, 8'd1, 3'd0, act_start, first_line[7:0], 3'd0, hue,
                        3'd0, par_inv, sat, v_inv, color_on, fm_mode, gl_mode, ar43, pic_mode_iq};
+    // Bytes 0..5 are kept in the flash and loaded after power-up, except the
+    // picture / waveform display (always the picture at power-up).
+    wire        cfg_load;
+    wire [47:0] cfg_data;
+    cfg_flash u_cfg (
+        .clk(clk_iq), .rst(rst_iq), .cur({settings[47:1], 1'b1}),
+        .load(cfg_load), .load_data(cfg_data), .status(cfg_status),
+        .f_cs_n(flash_cs_n), .f_clk(flash_clk), .f_mosi(flash_mosi), .f_miso(flash_miso)
+    );
+    assign flash_wp_n   = 1'b1;
+    assign flash_hold_n = 1'b1;
     reg        fb_recal    = 1'b0;
     reg        fb_flip     = 1'b0;
     always @(posedge clk_iq) begin
         fb_recal <= rx_valid && rx_data == "K";
         fb_flip  <= rx_valid && rx_data == "k";
     end
-    always @(posedge clk_iq) if (rx_valid) begin
+    always @(posedge clk_iq) if (cfg_load) begin
+        ar43       <= cfg_data[1];
+        gl_mode    <= cfg_data[3:2];
+        fm_mode    <= cfg_data[5:4];
+        color_on   <= cfg_data[6];
+        v_inv      <= cfg_data[7];
+        sat        <= cfg_data[11:8];
+        par_inv    <= cfg_data[12];
+        hue        <= cfg_data[20:16];
+        first_line <= {2'b00, cfg_data[31:24]};
+        act_start  <= cfg_data[44:32];
+    end else if (rx_valid) begin
         case (rx_data)
             "P": pic_mode_iq <= 1'b1;
             "W": pic_mode_iq <= 1'b0;
