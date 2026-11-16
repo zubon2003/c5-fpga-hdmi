@@ -76,15 +76,19 @@ v5.0.332 is tested unmodified here); the modified v5.0.523 in
 To step the band and channel with the Dock's buttons and see the channel
 on screen, the C5 needs a modified C5VRX-5 with a UART on its two DAC LSB
 pins: [firmware/](firmware/README.md) has the patches (v5.0.523, tested
-2026-10-27; the older v5.0.387 one) and the build steps. It is not an
+2026-10-27; the older v5.0.387 one) and the build steps, and the release
+from v0.3.1 has a prebuilt image of the v5.0.523 one. It is not an
 official C5VRX release; the C5's own analog video output is off in it.
 Everything else here works with the official firmware up to v5.0.464.
 
 ## Wiring (XIAO ESP32-C5 → Tang Primer 25K Dock J4)
 
 Dock PMOD J4 pin numbers as in the Dock schematic: pins 1/2 are +3V3,
-pins 3/4 are GND, pins 5..12 are signals (left column even pins, right
-column odd pins). Find pin 1 with a meter (+3.3 V) before wiring.
+pins 3/4 are GND, pins 5..12 are signals. Looking into the J4 socket from
+outside with the Dock's component side up, pins 1/2 are at the left end
+and the odd pins are in the upper row; the drawing below shows the socket
+turned 90 degrees (pins 1/2 at the top, odd pins on the right). Find pin 1
+with a meter (+3.3 V) before wiring.
 
 ```
    XIAO ESP32-C5                         Tang Primer 25K Dock, PMOD J4
@@ -120,6 +124,9 @@ column odd pins). Find pin 1 with a meter (+3.3 V) before wiring.
 - Keep the wires short (under ~10 cm): the IQ bits change at 80 MHz.
 - The three I bits on the XIAO's back-side JTAG pads need soldering.
 - The PMOD DVI goes on **J5** (the middle PMOD; J6 until 2026-11-01).
+- The XIAO PMOD carrier in [hardware/c5_pmod_carrier](hardware/c5_pmod_carrier/README.md)
+  uses a different pin order from this jumper wiring and does not work
+  with this bitstream (see its README).
 
 The SDRAM module plugs into the Dock's 40-pin header J3 (pins as in
 Sipeed's TangPrimer-25K-example `nestang-25k`). With genlock off (the
@@ -149,17 +156,23 @@ nothing.
 
 Prebuilt bitstreams are attached to the
 [GitHub releases](../../releases) (`c5_fpga_hdmi.fs` for the Gowin
-Programmer, `c5_fpga_hdmi.bin` for other loaders). Releases up to v0.2.0
-are the earlier design: no SDRAM, PMOD DVI on J6, receiver link on J5.
+Programmer, `c5_fpga_hdmi.bin` for other loaders). From v0.3.1 the release
+also has the modified C5 firmware as one image
+(`c5vrx5-v5.0.523-fpga-link-merged.bin`, see
+[firmware/](firmware/README.md#prebuilt-image)). Saving the settings in
+the configuration flash is new in v0.3.1; v0.3.0 forgets them at
+power-off. Releases up to v0.2.0 are the earlier design: no SDRAM, PMOD
+DVI on J6, receiver link on J5.
 
 With the Gowin Programmer (Education edition, no licence needed), device
-**GW5A-25A / GW5A-LV25MG121NC1/I0**:
+**GW5A-25A / GW5A-LV25MG121NC1/I0**. Give `--fsFile` as a full path; a
+bare file name can fail to load:
 
 ```powershell
 # SRAM (lost at power-off)
-programmer_cli.exe --device GW5A-25A --run 2  --fsFile c5_fpga_hdmi.fs
+programmer_cli.exe --device GW5A-25A --run 2  --fsFile C:\path\to\c5_fpga_hdmi.fs
 # external flash (boots at power-on, ~3 minutes)
-programmer_cli.exe --device GW5A-25A --run 54 --fsFile c5_fpga_hdmi.fs
+programmer_cli.exe --device GW5A-25A --run 54 --fsFile C:\path\to\c5_fpga_hdmi.fs
 ```
 
 If the Programmer reports a different ID, your board may be GW5A-25B:
@@ -167,11 +180,13 @@ change `set_device` in `scripts/build.tcl` and rebuild.
 
 ### Building
 
-Gowin EDA Education 1.9.11.03 (batch mode):
+Gowin EDA Education 1.9.11.03 (batch mode). `scripts\build.ps1` expects
+it in `C:\Gowin\Gowin_V1.9.11.03_Education_x64`; edit `$gw` there for
+another install path:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
-# output: impl\pnr\c5_fpga_hdmi.fs
+# output: impl\pnr\c5_fpga_hdmi.fs and .bin
 ```
 
 ## Use

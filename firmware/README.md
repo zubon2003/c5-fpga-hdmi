@@ -37,6 +37,27 @@ The v5.0.387 patch has the same UART link (with its own task) and also
 keeps the sync flywheel off, because there it drives all six DAC pins.
 C5VRX removed the flywheel in PR #260.
 
+## Prebuilt image
+
+The c5-fpga-hdmi release v0.3.1 has the v5.0.523 patch built with
+ESP-IDF v6.0.2 as one image for offset 0x0
+(`c5vrx5-v5.0.523-fpga-link-merged.bin`: bootloader at 0x2000, partition
+table at 0x8000, app at 0x10000; 8 MB flash, DIO, 80 MHz). It is the
+build that runs on the receivers used for this project. Its source is
+C5VRX `c5vrx5-v5.0.523` plus `c5vrx5-v5.0.523-fpga-link.patch`.
+
+Hold the XIAO's BOOT button while plugging in USB (a running receiver
+does not take a plain esptool reset), then:
+
+```sh
+esptool --chip esp32c5 --port <XIAO COM port> write-flash 0x0 c5vrx5-v5.0.523-fpga-link-merged.bin
+```
+
+(esptool before v5: `esptool.py ... write_flash`.) Unplug and plug the
+XIAO in again to start it. The image covers the NVS partition (0x9000),
+so the saved C5VRX settings go back to their defaults: set the channel
+again and let the first calibration finish.
+
 ## Build and flash
 
 ESP-IDF **v6.0.2** (C5VRX checks the PHY library of exactly this version):

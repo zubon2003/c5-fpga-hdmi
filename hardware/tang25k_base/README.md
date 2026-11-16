@@ -64,13 +64,19 @@ the chip enumerates as the stock 0403:6010.
 
 ## FPGA pins
 
-Unchanged from `top.cst`: clock E2, SDRAM (except CS# and DQM), receiver 1
-`iq[0..7]`, HDMI pairs, `link_tx` L5, `link_rx` K5, UART B3 (RX) / C3 (TX).
+The board was laid out with the Dock pin map from before 2026-11-01
+(HDMI on PMOD J6, receiver link on PMOD J5), so it needs its own
+constraints file; the `top.cst` of this repository (HDMI on J5, link on
+the USB-A port) does not fit it. The same as in `top.cst`: clock E2,
+SDRAM (except CS# and DQM), receiver 1 `iq[0..7]`, UART B3 (RX) / C3 (TX).
 
 | Signal | Pin | Note |
 |---|---|---|
 | SDRAM CS#, LDQM, UDQM | - | tied to GND on the board (`sdram_fb.v` already drives DQM low) |
 | SDRAM CKE | - | tied to 3.3 V |
+| HDMI D0, D1, D2, clock (P, N) | H7 H8, G8 G7, G5 F5, J5 H5 | the Dock's J6 pins; P/N swapped, see below |
+| receiver link TX (`link_tx`, to both XIAOs) | L5 | |
+| receiver 1 TX (`link_rx`) | K5 | |
 | receiver 2 `iq2[0..7]` (Q0 Q1 Q2 QS I0 I1 I2 IS) | E11 E10 A11 A10 K11 L11 L6 K6 | |
 | receiver 2 TX (`link_rx2`) | K9 | |
 | 74HC165 SH/LD#, CLK, QH | H11, H10, L8 | buttons, active low, A..F = SW1..SW6 |
@@ -79,8 +85,8 @@ Unchanged from `top.cst`: clock E2, SDRAM (except CS# and DQM), receiver 1
 | DONE | D7 | LED |
 | RECONFIG_N | D8 | SW7 |
 
-The HDMI pairs keep the pins of `top.cst`, but on the board every pair's
-P and N are swapped (H8, G7, F5, H5 go to the connector's minus pins) so
+The HDMI pairs use the Dock's J6 pins (the PMOD DVI port before
+2026-11-01), but on the board every pair's P and N are swapped (H8, G7, F5, H5 go to the connector's minus pins) so
 the traces run straight without crossing. The HDL has to invert the
 serialised TMDS bits of all four channels.
 

@@ -15,7 +15,8 @@ What is on it:
     schematics)
   - USB-C -> FT2232HL: channel A = JTAG (MPSSE), channel B = UART to the FPGA
   - one 16-bit SDRAM (W9825G6KH, TSOP-II 54); CS# and DQM tied low
-  - HDMI type A, driven straight from bank 1 (pins as top.cst); the P/N of
+  - HDMI type A, driven straight from bank 1 (the Dock's J6 pins, where the
+    PMOD DVI was before 2026-11-01; top.cst now has it on J5); the P/N of
     every pair are swapped on the board so the traces do not cross, so the
     HDL inverts the TMDS bits
   - two XIAO ESP32-C5 receivers on sockets, all IQ lines to the FPGA
@@ -98,7 +99,8 @@ J2_PWR = {**{n: "GND" for n in (1, 19, 29, 35, 41, 47, 53, 59)},
           **{n: "+5V" for n in (52, 54, 56, 58, 60)}}
 
 # FPGA ball -> net. SDRAM as top.cst (CS# and DQM tied low on the board);
-# rx1 IQ as top.cst; HDMI as top.cst with P/N swapped (see the docstring).
+# rx1 IQ as top.cst; HDMI on the Dock's J6 pins with P/N swapped (see the
+# docstring); receiver link on the old PMOD J5 pins L5 / K5.
 BALL_NET = {
     # SDRAM
     "E3": "SD_CLK", "L10": "SD_RAS", "K10": "SD_CAS", "J7": "SD_WE",

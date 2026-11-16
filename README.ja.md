@@ -76,15 +76,18 @@ v5.0.332 だけです）。[firmware/](firmware/README.md) の改変版 v5.0.523
 Dock のボタンでバンドとチャンネルを切り替え、画面にチャンネルを表示するには、
 DAC の下位 2 ピンに UART を足した、改変版の C5VRX-5 が必要です。パッチ
 （2026-10-27 に確認した v5.0.523 用と、以前の v5.0.387 用）とビルド手順は
-[firmware/](firmware/README.md) にあります。C5VRX の公式リリースでは
+[firmware/](firmware/README.md) にあります。v0.3.1 からは、v5.0.523 用を
+ビルドしたイメージをリリースに添付しています。C5VRX の公式リリースでは
 ありません。この版では、C5 自身のアナログ映像出力は止まります。それ以外の
 機能は、v5.0.464 までの公式のファームウェアで動きます。
 
 ## 結線（XIAO ESP32-C5 → Tang Primer 25K Dock J4）
 
 Dock の PMOD J4 のピン番号は、Dock の回路図どおりです。1/2 番が +3V3、
-3/4 番が GND、5〜12 番が信号です（左列が偶数ピン、右列が奇数ピン）。
-配線する前に、テスターで 1 番ピン（+3.3 V）を確認してください。
+3/4 番が GND、5〜12 番が信号です。Dock の部品面を上にして J4 の差し込み口を
+外から見ると、1/2 番が左端、奇数ピンが上の列です。下の図は差し込み口を
+90° 回して描いています（1/2 番が上、奇数ピンが右）。配線する前に、テスターで
+1 番ピン（+3.3 V）を確認してください。
 
 ```
    XIAO ESP32-C5                         Tang Primer 25K Dock, PMOD J4
@@ -120,6 +123,9 @@ Dock の PMOD J4 のピン番号は、Dock の回路図どおりです。1/2 番
 - 配線は短く（目安 10 cm 以下）してください。IQ のビットは 80 MHz で変化します。
 - XIAO の裏面の JTAG パッドにある I の 3 本は、はんだ付けが必要です。
 - PMOD DVI は **J5**（真ん中の PMOD）に挿します（2026-11-01 までは J6）。
+- [hardware/c5_pmod_carrier](hardware/c5_pmod_carrier/README.md) の XIAO 用
+  PMOD キャリア基板は、このジャンパー線の結線とピンの並びが違うため、この
+  ビットストリームでは動きません（基板の README を参照）。
 
 SDRAM モジュールは Dock の 40 ピンヘッダー J3 に挿します（ピン配置は Sipeed の
 TangPrimer-25K-example の `nestang-25k` と同じ）。ゲンロックオフ（起動時の設定、
@@ -148,17 +154,22 @@ D4/D5 の抵抗を外してください。2026-11-01 にチャンネル報告（
 
 ビルド済みのビットストリームを [GitHub のリリース](../../releases) に添付して
 あります（Gowin Programmer 用の `c5_fpga_hdmi.fs`、ほかの書き込みツール用の
-`c5_fpga_hdmi.bin`）。v0.2.0 までのリリースは以前の構成です（SDRAM なし、
+`c5_fpga_hdmi.bin`）。v0.3.1 からは、改変版の C5 ファームウェアを 1 つに
+まとめたイメージ（`c5vrx5-v5.0.523-fpga-link-merged.bin`。
+[firmware/](firmware/README.md#prebuilt-image) を参照）も添付しています。
+設定を設定用フラッシュに保存する機能は v0.3.1 からで、v0.3.0 では電源を
+切ると設定が消えます。v0.2.0 までのリリースは以前の構成です（SDRAM なし、
 PMOD DVI は J6、受信機リンクは J5）。
 
 Gowin Programmer（Education 版、ライセンス不要）で書き込みます。デバイスは
-**GW5A-25A / GW5A-LV25MG121NC1/I0** です。
+**GW5A-25A / GW5A-LV25MG121NC1/I0** です。`--fsFile` はフルパスで指定して
+ください（ファイル名だけでは読み込めないことがあります）。
 
 ```powershell
 # SRAM（電源を切ると消える）
-programmer_cli.exe --device GW5A-25A --run 2  --fsFile c5_fpga_hdmi.fs
+programmer_cli.exe --device GW5A-25A --run 2  --fsFile C:\path\to\c5_fpga_hdmi.fs
 # 外部フラッシュ（電源投入時に起動、約 3 分）
-programmer_cli.exe --device GW5A-25A --run 54 --fsFile c5_fpga_hdmi.fs
+programmer_cli.exe --device GW5A-25A --run 54 --fsFile C:\path\to\c5_fpga_hdmi.fs
 ```
 
 Programmer がデバイス ID の不一致を出した場合は、ボードが GW5A-25B の
@@ -167,11 +178,13 @@ Programmer がデバイス ID の不一致を出した場合は、ボードが G
 
 ### ビルド
 
-Gowin EDA Education 1.9.11.03（バッチ実行）:
+Gowin EDA Education 1.9.11.03（バッチ実行）。`scripts\build.ps1` は
+`C:\Gowin\Gowin_V1.9.11.03_Education_x64` にあるものとしています。別の場所に
+入れた場合は、その中の `$gw` を書き換えてください。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
-# 出力: impl\pnr\c5_fpga_hdmi.fs
+# 出力: impl\pnr\c5_fpga_hdmi.fs と .bin
 ```
 
 ## 使い方

@@ -12,7 +12,12 @@ wide (v1 was 33 mm) so that it clears the parts next to the PMOD port.
 All right-angle track corners are cut to two 45 degree bends. The PMOD
 pin order changed again with the rotation (see Signals).
 
-Not built or tested yet.
+Built and tested: one receiver on J6 on 2026-11-09, two receivers (J4
+and J6) on 2026-11-15, with a development bitstream that reads both
+ports. That bitstream is not released yet. **The released bitstream
+(v0.3.1 and earlier) does not work with this board:** it reads one
+receiver on J4 in the jumper-wire order of the main README, not in the
+order below.
 
 ## Files
 
@@ -55,7 +60,7 @@ PMOD pins 1/2 (+3V3) are not connected; the XIAO runs from the 5 V pad.
 The PMOD order is chosen so that all traces are on the top layer
 without crossings (the bottom layer is a solid ground plane), so it is
 not the order of the earlier jumper wiring (nor of v1/v2). `top.cst` has
-to follow it:
+to follow it (the `top.cst` of the released bitstream does not):
 
 | PMOD | Signal | XIAO | J4 pin (FPGA) | J6 pin (FPGA) |
 |---|---|---|---|---|
