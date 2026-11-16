@@ -84,26 +84,34 @@ Everything else here works with the official firmware up to v5.0.464.
 ## Wiring (XIAO ESP32-C5 → Tang Primer 25K Dock J4)
 
 Dock PMOD J4 pin numbers as in the Dock schematic: pins 1/2 are +3V3,
-pins 3/4 are GND, pins 5..12 are signals. Looking into the J4 socket from
-outside with the Dock's component side up, pins 1/2 are at the left end
-and the odd pins are in the upper row; the drawing below shows the socket
-turned 90 degrees (pins 1/2 at the top, odd pins on the right). Find pin 1
-with a meter (+3.3 V) before wiring.
+pins 3/4 are GND, pins 5..12 are signals. J4 is the PMOD port on the
+USB-C (debugger) side of the Dock; J5 is the middle one, J6 the one on
+the USB-A side. The drawing shows J4 as you see it when you look into
+the socket from outside, with the Dock's component side up: pins 1/2 at
+the left end, odd pins in the upper row. Find pin 1 with a meter
+(+3.3 V) before wiring.
 
 ```
-   XIAO ESP32-C5                         Tang Primer 25K Dock, PMOD J4
-   (top side)                                  ┌─────────┐
-   GND  ──────────────────────────────── 3/4  │ 2    1  │  +3V3  (do NOT connect)
-   D0   (GPIO1)  ── Q bit 0 ───────────── 5   │ 4    3  │  GND
-   D1   (GPIO0)  ── Q bit 1 ───────────── 6   │ 6    5  │
-   D2   (GPIO25) ── Q bit 2 ───────────── 7   │ 8    7  │
-   D3   (GPIO7)  ── Q sign  ───────────── 8   │ 10   9  │
-   D10  (GPIO10) ── I bit 0 ───────────── 9   │ 12  11  │
-   (back side JTAG pads)                       └─────────┘
-   MTDO (GPIO5)  ── I bit 1 ───────────── 10
-   MTDI (GPIO3)  ── I bit 2 ───────────── 11
-   MTCK (GPIO4)  ── I sign  ───────────── 12
-   MTMS (GPIO2)  ── do NOT connect (driven by official C5VRX-5 firmware)
+  Tang Primer 25K Dock, PMOD J4, looking into the socket
+  (Dock component side up)
+
+  pin     1        3        5        7        9        11
+       +--------+--------+--------+--------+--------+--------+
+ upper | +3V3   | GND    | Q bit0 | Q bit2 | I bit0 | I bit2 |
+  row  | (none) | XIAO   | XIAO   | XIAO   | XIAO   | XIAO   |
+       |        | GND    | D0     | D2     | D10    | MTDI * |
+       +--------+--------+--------+--------+--------+--------+
+ lower | +3V3   | GND    | Q bit1 | Q sign | I bit1 | I sign |
+  row  | (none) |        | XIAO   | XIAO   | XIAO   | XIAO   |
+       |        |        | D1     | D3     | MTDO * | MTCK * |
+       +--------+--------+--------+--------+--------+--------+
+  pin     2        4        6        8        10       12
+
+  (none): do NOT connect the XIAO's 3V3 or 5V here
+  *     : JTAG pads on the back of the XIAO (MTDO GPIO5, MTDI GPIO3,
+          MTCK GPIO4); solder a wire to each
+  XIAO MTMS (GPIO2): do NOT connect (driven by official C5VRX-5 firmware)
+  One GND wire is enough (pin 3 or 4).
 ```
 
 | J4 pin | FPGA ball | `iq[n]` | Signal | XIAO pin | ESP32-C5 GPIO |
