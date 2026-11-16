@@ -239,7 +239,8 @@ values marked power-up below apply when nothing has been saved:
 | `C` `S` `B` `G` | logic-analyser captures (raw IQ, symbols, FM output, chroma) |
 
 `scripts/viewer.py` is the PC test app: it shows the HDMI output through
-a UVC capture device and controls the FPGA over the UART.
+a UVC capture device and controls the FPGA over the UART. Manual:
+[docs/VIEWER.md](docs/VIEWER.md).
 
 - **Picture**: scales with the window; F11 (or View > Fullscreen) for full
   screen, Esc to leave.

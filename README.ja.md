@@ -234,7 +234,8 @@ Dock の USB デバッガには UART（2 つ目の COM ポート、1 Mbaud）が
 | `C` `S` `B` `G` | ロジアナの取り込み（生の IQ、シンボル、FM 検波出力、色信号） |
 
 `scripts/viewer.py` は PC 用のテストアプリです。UVC キャプチャ装置経由で
-HDMI の出力を表示し、UART で FPGA を操作します。
+HDMI の出力を表示し、UART で FPGA を操作します。説明書は
+[docs/VIEWER.ja.md](docs/VIEWER.ja.md) にあります。
 
 - **映像**: ウィンドウの大きさに合わせて拡大縮小します。F11（または View >
   Fullscreen）で全画面、Esc で戻ります。
